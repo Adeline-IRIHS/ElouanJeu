@@ -1,71 +1,179 @@
 -- ServerScriptService/DataManager
--- Système de sauvegarde des données des joueurs
+-- Système de sauvegarde des données des joueurs - VERSION SOLIDE
 -- Créé le 2025-11-16 par Adeline-IRIHS
 
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
 
 -- DataStore
-local PlayerDataStore = DataStoreService:GetDataStore("PlayerData_v1") -- Change la version si tu veux reset les données
+local DATASTORE_VERSION = 2 -- ✅ Incrémenter pour forcer un reset
+local PlayerDataStore = DataStoreService:GetDataStore("PlayerData_v" .. DATASTORE_VERSION)
 
--- Structure de données par défaut
+-- ✅ STRUCTURE COMPLÈTE ET EXTENSIBLE
 local DEFAULT_DATA = {
-	Rizz = 0, -- Monnaie du joueur
+	-- Monnaie
+	Rizz = 1000, -- Monnaie de départ (1000 pour tester)
+
+	-- Base
 	BaseNumber = nil, -- Quelle base il a choisi (1 à 8, nil = aucune)
+	BaseCustomization = { -- ✅ NOUVEAU : Personnalisation de la base
+		Walls = {
+			Material = "Plastic",
+			ColorR = 163,  -- ✅ Séparer Color3 en R, G, B
+			ColorG = 162,
+			ColorB = 165,
+			Texture = nil
+		},
+		Floor = {
+			Material = "Concrete",
+			ColorR = 99,
+			ColorG = 95,
+			ColorB = 98,
+			Texture = nil
+		},
+		Theme = "Default" -- Default, Dark, Light, Neon, etc.
+	},
+
+	-- Brainrots
 	Brainrots = {}, -- Liste des brainrots achetés
+	-- Chaque brainrot : {Type, SlotNumber, PriceMultiplier, BasePrice, RizzPerTick}
+
+	-- Progression
 	Floors = {1}, -- Étages débloqués (commence avec Floor 1)
+	Level = 1, -- ✅ NOUVEAU : Niveau du joueur
+	Experience = 0, -- ✅ NOUVEAU : Points d'expérience
+
+	-- Statistiques
+	Stats = { -- ✅ NOUVEAU : Statistiques du joueur
+		TotalRizzEarned = 0,
+		TotalBrainrotsBought = 0,
+		PlayTime = 0, -- En secondes
+		JoinDate = os.time()
+	},
+
+	-- Métadonnées
+	DataVersion = DATASTORE_VERSION,
 	LastSave = os.time()
 }
 
 -- Données des joueurs en mémoire
 local playerData = {}
 
+-- ✅ FONCTION UTILITAIRE : Fusionner les données par défaut avec les données chargées
+local function mergeWithDefaults(loadedData)
+	local merged = {}
+
+	-- Copier toutes les valeurs par défaut
+	for key, value in pairs(DEFAULT_DATA) do
+		if type(value) == "table" then
+			merged[key] = {}
+			for subKey, subValue in pairs(value) do
+				if type(subValue) == "table" then
+					merged[key][subKey] = {}
+					for deepKey, deepValue in pairs(subValue) do
+						merged[key][subKey][deepKey] = deepValue
+					end
+				else
+					merged[key][subKey] = subValue
+				end
+			end
+		else
+			merged[key] = value
+		end
+	end
+
+	-- Écraser avec les données chargées
+	if loadedData then
+		for key, value in pairs(loadedData) do
+			if merged[key] ~= nil then
+				merged[key] = value
+			end
+		end
+	end
+
+	-- S'assurer que la version est à jour
+	merged.DataVersion = DATASTORE_VERSION
+
+	return merged
+end
+
+-- ✅ FONCTION UTILITAIRE : Valider les données
+local function validateData(data)
+	-- Vérifier que Rizz est un nombre
+	if type(data.Rizz) ~= "number" then
+		data.Rizz = tonumber(data.Rizz) or DEFAULT_DATA.Rizz
+	end
+
+	-- Vérifier que Brainrots est une table
+	if type(data.Brainrots) ~= "table" then
+		data.Brainrots = {}
+	end
+
+	-- Vérifier chaque brainrot
+	for i, brainrot in ipairs(data.Brainrots) do
+		if type(brainrot) ~= "table" then
+			table.remove(data.Brainrots, i)
+			continue
+		end
+
+		-- S'assurer que les valeurs sont correctes
+		brainrot.SlotNumber = tonumber(brainrot.SlotNumber) or 1
+		brainrot.PriceMultiplier = tonumber(brainrot.PriceMultiplier) or 1
+		brainrot.BasePrice = tonumber(brainrot.BasePrice) or 100
+		brainrot.RizzPerTick = tonumber(brainrot.RizzPerTick) or 1
+	end
+
+	return data
+end
+
 -- Fonction pour charger les données d'un joueur
 local function loadPlayerData(player)
 	local userId = player.UserId
-	local success, data = pcall(function()
+	local success, loadedData = pcall(function()
 		return PlayerDataStore:GetAsync("Player_" .. userId)
 	end)
 
-	if success then
-		if data then
-			-- Données trouvées, les charger
-			playerData[userId] = data
-			warn("✅ Données chargées pour", player.Name, "- Rizz:", data.Rizz)
-		else
-			-- Nouveau joueur, créer des données par défaut
-			playerData[userId] = {
-				Rizz = DEFAULT_DATA.Rizz,
-				BaseNumber = DEFAULT_DATA.BaseNumber,
-				Brainrots = {},
-				Floors = {1},
-				LastSave = os.time()
-			}
-			warn("🆕 Nouveau joueur:", player.Name, "- Données par défaut créées")
-		end
+	local data
+
+	if success and loadedData then
+		-- Fusionner avec les valeurs par défaut (pour ajouter de nouveaux champs)
+		data = mergeWithDefaults(loadedData)
+		print("✅ Données chargées pour", player.Name)
+		print("   - Rizz:", data.Rizz)
+		print("   - Brainrots:", #data.Brainrots)
+		print("   - Level:", data.Level)
 	else
-		-- Erreur de chargement
-		warn("❌ Erreur de chargement pour", player.Name, "- Données par défaut utilisées")
-		playerData[userId] = {
-			Rizz = DEFAULT_DATA.Rizz,
-			BaseNumber = DEFAULT_DATA.BaseNumber,
-			Brainrots = {},
-			Floors = {1},
-			LastSave = os.time()
-		}
+		-- Nouveau joueur ou erreur
+		data = mergeWithDefaults(nil)
+		if success then
+			print("🆕 Nouveau joueur:", player.Name)
+		else
+			warn("❌ Erreur de chargement pour", player.Name, "- Données par défaut utilisées")
+		end
 	end
 
-	-- Créer les leaderstats (affichage dans la liste des joueurs)
+	-- Valider les données
+	data = validateData(data)
+
+	-- Sauvegarder en mémoire
+	playerData[userId] = data
+
+	-- Créer les leaderstats
 	local leaderstats = Instance.new("Folder")
 	leaderstats.Name = "leaderstats"
 	leaderstats.Parent = player
 
 	local rizzValue = Instance.new("IntValue")
 	rizzValue.Name = "Rizz"
-	rizzValue.Value = playerData[userId].Rizz
+	rizzValue.Value = data.Rizz
 	rizzValue.Parent = leaderstats
 
-	return playerData[userId]
+	local levelValue = Instance.new("IntValue")
+	levelValue.Name = "Level"
+	levelValue.Value = data.Level
+	levelValue.Parent = leaderstats
+
+	return data
 end
 
 -- Fonction pour sauvegarder les données d'un joueur
@@ -81,13 +189,23 @@ local function savePlayerData(player)
 	-- Mettre à jour le timestamp
 	data.LastSave = os.time()
 
+	-- Valider avant sauvegarde
+	data = validateData(data)
+
+	-- ✅ DEBUG : Afficher ce qui va être sauvegardé
+	print("💾 SAUVEGARDE pour", player.Name, ":")
+	print("   - Rizz:", data.Rizz)
+	print("   - BaseNumber:", data.BaseNumber)
+	print("   - Brainrots:", #data.Brainrots)
+	print("   - Level:", data.Level)
+
 	-- Sauvegarder
 	local success, errorMessage = pcall(function()
 		PlayerDataStore:SetAsync("Player_" .. userId, data)
 	end)
 
 	if success then
-		warn("💾 Données sauvegardées pour", player.Name)
+		print("💾 ✅ Données sauvegardées pour", player.Name)
 		return true
 	else
 		warn("❌ Erreur de sauvegarde pour", player.Name, ":", errorMessage)
@@ -123,63 +241,65 @@ game:BindToClose(function()
 	for _, player in pairs(Players:GetPlayers()) do
 		savePlayerData(player)
 	end
-	task.wait(3) -- Attendre que les sauvegardes se terminent
+	task.wait(3)
 end)
 
--- Fonctions globales accessibles par d'autres scripts
+-- ✅ API GLOBALE COMPLÈTE ET EXTENSIBLE
 _G.DataManager = {
-	-- Obtenir les données d'un joueur
+	-- ========== DONNÉES GÉNÉRALES ==========
 	GetData = function(player)
 		return playerData[player.UserId]
 	end,
 
-	-- Obtenir le Rizz d'un joueur
+	-- ========== RIZZ ==========
 	GetRizz = function(player)
 		local data = playerData[player.UserId]
-		return data and data.Rizz or 0
+		return tonumber(data and data.Rizz or 0) or 0
 	end,
 
-	-- Ajouter du Rizz
 	AddRizz = function(player, amount)
 		local data = playerData[player.UserId]
-		if data then
-			data.Rizz = data.Rizz + amount
+		if not data then return false end
 
-			-- Mettre à jour les leaderstats
-			local leaderstats = player:FindFirstChild("leaderstats")
-			if leaderstats then
-				local rizzValue = leaderstats:FindFirstChild("Rizz")
-				if rizzValue then
-					rizzValue.Value = data.Rizz
-				end
+		amount = tonumber(amount) or 0
+		data.Rizz = data.Rizz + amount
+		data.Stats.TotalRizzEarned = data.Stats.TotalRizzEarned + amount
+
+		-- Mettre à jour leaderstats
+		local leaderstats = player:FindFirstChild("leaderstats")
+		if leaderstats then
+			local rizzValue = leaderstats:FindFirstChild("Rizz")
+			if rizzValue then
+				rizzValue.Value = data.Rizz
 			end
-
-			return true
 		end
-		return false
+
+		return true
 	end,
 
-	-- Retirer du Rizz
 	RemoveRizz = function(player, amount)
 		local data = playerData[player.UserId]
-		if data and data.Rizz >= amount then
-			data.Rizz = data.Rizz - amount
+		amount = tonumber(amount) or 0
 
-			-- Mettre à jour les leaderstats
-			local leaderstats = player:FindFirstChild("leaderstats")
-			if leaderstats then
-				local rizzValue = leaderstats:FindFirstChild("Rizz")
-				if rizzValue then
-					rizzValue.Value = data.Rizz
-				end
-			end
-
-			return true
+		if not data or data.Rizz < amount then
+			return false
 		end
-		return false
+
+		data.Rizz = data.Rizz - amount
+
+		-- Mettre à jour leaderstats
+		local leaderstats = player:FindFirstChild("leaderstats")
+		if leaderstats then
+			local rizzValue = leaderstats:FindFirstChild("Rizz")
+			if rizzValue then
+				rizzValue.Value = data.Rizz
+			end
+		end
+
+		return true
 	end,
 
-	-- Définir la base du joueur
+	-- ========== BASE ==========
 	SetBase = function(player, baseNumber)
 		local data = playerData[player.UserId]
 		if data then
@@ -189,29 +309,75 @@ _G.DataManager = {
 		return false
 	end,
 
-	-- Obtenir la base du joueur
 	GetBase = function(player)
 		local data = playerData[player.UserId]
 		return data and data.BaseNumber or nil
 	end,
 
-	-- Ajouter un brainrot
-	AddBrainrot = function(player, brainrotData)
+
+	-- ✅ NOUVEAU : Customisation de la base avec conversion Color3
+	SetBaseCustomization = function(player, customizationType, property, value)
 		local data = playerData[player.UserId]
-		if data then
-			table.insert(data.Brainrots, brainrotData)
+		if not data then return false end
+
+		-- customizationType = "Walls" ou "Floor"
+		-- property = "Material", "Color", ou "Texture"
+		if data.BaseCustomization[customizationType] then
+			if property == "Color" and typeof(value) == "Color3" then
+				-- Convertir Color3 en RGB séparé
+				data.BaseCustomization[customizationType].ColorR = math.floor(value.R * 255)
+				data.BaseCustomization[customizationType].ColorG = math.floor(value.G * 255)
+				data.BaseCustomization[customizationType].ColorB = math.floor(value.B * 255)
+			else
+				data.BaseCustomization[customizationType][property] = value
+			end
 			return true
 		end
+
 		return false
 	end,
 
-	-- Obtenir tous les brainrots
+	-- ========== BRAINROTS ==========
+	AddBrainrot = function(player, brainrotData)
+		local data = playerData[player.UserId]
+		if not data then return false end
+
+		-- Nettoyer les données
+		local cleanData = {
+			Type = tostring(brainrotData.Type),
+			SlotNumber = tonumber(brainrotData.SlotNumber),
+			PriceMultiplier = tonumber(brainrotData.PriceMultiplier) or 1,
+			BasePrice = tonumber(brainrotData.BasePrice) or 100,
+			RizzPerTick = tonumber(brainrotData.RizzPerTick) or 1
+		}
+
+		table.insert(data.Brainrots, cleanData)
+		data.Stats.TotalBrainrotsBought = data.Stats.TotalBrainrotsBought + 1
+
+		print("✅ Brainrot ajouté:", cleanData.Type, "Slot:", cleanData.SlotNumber)
+		return true
+	end,
+
 	GetBrainrots = function(player)
 		local data = playerData[player.UserId]
 		return data and data.Brainrots or {}
 	end,
 
-	-- Débloquer un étage
+	RemoveBrainrot = function(player, slotNumber)
+		local data = playerData[player.UserId]
+		if not data then return false end
+
+		for i, brainrot in ipairs(data.Brainrots) do
+			if brainrot.SlotNumber == slotNumber then
+				table.remove(data.Brainrots, i)
+				return true
+			end
+		end
+
+		return false
+	end,
+
+	-- ========== PROGRESSION ==========
 	UnlockFloor = function(player, floorNumber)
 		local data = playerData[player.UserId]
 		if data then
@@ -224,16 +390,84 @@ _G.DataManager = {
 		return false
 	end,
 
-	-- Obtenir les étages débloqués
 	GetFloors = function(player)
 		local data = playerData[player.UserId]
 		return data and data.Floors or {1}
 	end,
 
-	-- Sauvegarder manuellement
+	-- ✅ NOUVEAU : Level et XP
+	AddExperience = function(player, amount)
+		local data = playerData[player.UserId]
+		if not data then return false end
+
+		data.Experience = data.Experience + amount
+
+		-- Level up ? (100 XP par niveau)
+		while data.Experience >= (data.Level * 100) do
+			data.Experience = data.Experience - (data.Level * 100)
+			data.Level = data.Level + 1
+
+			-- Mettre à jour leaderstats
+			local leaderstats = player:FindFirstChild("leaderstats")
+			if leaderstats then
+				local levelValue = leaderstats:FindFirstChild("Level")
+				if levelValue then
+					levelValue.Value = data.Level
+				end
+			end
+
+			print("🎉 LEVEL UP!", player.Name, "→ Level", data.Level)
+		end
+
+		return true
+	end,
+
+	GetLevel = function(player)
+		local data = playerData[player.UserId]
+		return data and data.Level or 1
+	end,
+
+	GetExperience = function(player)
+		local data = playerData[player.UserId]
+		return data and data.Experience or 0
+	end,
+
+	-- ========== STATISTIQUES ==========
+	GetStats = function(player)
+		local data = playerData[player.UserId]
+		return data and data.Stats or DEFAULT_DATA.Stats
+	end,
+
+	AddPlayTime = function(player, seconds)
+		local data = playerData[player.UserId]
+		if data then
+			data.Stats.PlayTime = data.Stats.PlayTime + seconds
+			return true
+		end
+		return false
+	end,
+
+	-- ========== SAUVEGARDE ==========
 	SaveData = function(player)
+		return savePlayerData(player)
+	end,
+
+	-- ✅ NOUVEAU : Forcer un reset des données
+	ResetData = function(player)
+		local data = mergeWithDefaults(nil)
+		playerData[player.UserId] = data
 		return savePlayerData(player)
 	end
 }
 
-warn("💾 DataManager initialisé - Prêt à sauvegarder les données !")
+-- ✅ Tracker le temps de jeu
+task.spawn(function()
+	while true do
+		task.wait(60) -- Toutes les minutes
+		for _, player in pairs(Players:GetPlayers()) do
+			_G.DataManager.AddPlayTime(player, 60)
+		end
+	end
+end)
+
+warn("💾 DataManager v" .. DATASTORE_VERSION .. " initialisé - Système solide et extensible !")
