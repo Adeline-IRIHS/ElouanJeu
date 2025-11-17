@@ -4,20 +4,28 @@
 
 local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
+local TweenService = game:GetService("TweenService")
 
 -- Attendre que les managers soient prêts
 while not _G.DataManager do
 	task.wait(0.5)
 end
 
+while not _G.BaseManager do
+	task.wait(0.5)
+end
+
 local DataManager = _G.DataManager
+local BaseManager = _G.BaseManager
 
 -- ✅ CONFIGURATION
 local COMMAND_PREFIX = "!" -- ✅ Utilise "!" au lieu de "/"
+local MOVE_SPEED = 16 -- Vitesse de déplacement (75% de la vitesse joueur)
 
 -- ✅ LISTE DES ADMINS (par UserId ou Username)
 local ADMINS = {
 	"Elouan050709",
+	"Adeline-IRIHS",
 }
 
 -- ✅ FONCTION : Vérifier si un joueur est admin
@@ -45,6 +53,124 @@ local function formatNumber(num)
 		return string.format("%.1fK", num / 1000)
 	else
 		return tostring(math.floor(num))
+	end
+end
+
+-- ✅ FONCTION : Déplacer un brainrot sur les waypoints
+local function moveBrainrotOnPath(brainrot)
+	-- Trouver le folder Portal
+	local portalFolder = workspace:FindFirstChild("Portal")
+	if not portalFolder then
+		warn("❌ Folder 'Portal' introuvable dans Workspace")
+		brainrot:Destroy()
+		return
+	end
+
+	-- Trouver les waypoints (ARBORESCENCE CORRECTE)
+	local spawnPortalA = portalFolder:FindFirstChild("SpawnPortalA")
+	local conveyorPath = workspace:FindFirstChild("ConveyorPath") -- ✅ CORRIGÉ
+	local spawnPortalB = portalFolder:FindFirstChild("SpawnPortalB")
+
+	if not spawnPortalA or not conveyorPath or not spawnPortalB then
+		warn("❌ Portails ou ConveyorPath introuvables")
+		warn("   SpawnPortalA:", spawnPortalA and "✅" or "❌")
+		warn("   ConveyorPath:", conveyorPath and "✅" or "❌")
+		warn("   SpawnPortalB:", spawnPortalB and "✅" or "❌")
+		brainrot:Destroy()
+		return
+	end
+
+	-- Obtenir la position du SpawnPortalA (c'est un Model)
+	local startPosition
+	if spawnPortalA.PrimaryPart then
+		startPosition = spawnPortalA.PrimaryPart.Position
+	else
+		-- Fallback : prendre la première BasePart
+		local firstPart = spawnPortalA:FindFirstChildWhichIsA("BasePart", true)
+		if firstPart then
+			startPosition = firstPart.Position
+		else
+			warn("❌ SpawnPortalA n'a pas de PrimaryPart ou BasePart")
+			brainrot:Destroy()
+			return
+		end
+	end
+
+	-- Obtenir la position du SpawnPortalB (c'est un Model)
+	local endPosition
+	if spawnPortalB.PrimaryPart then
+		endPosition = spawnPortalB.PrimaryPart.Position
+	else
+		-- Fallback : prendre la première BasePart
+		local firstPart = spawnPortalB:FindFirstChildWhichIsA("BasePart", true)
+		if firstPart then
+			endPosition = firstPart.Position
+		else
+			warn("❌ SpawnPortalB n'a pas de PrimaryPart ou BasePart")
+			brainrot:Destroy()
+			return
+		end
+	end
+
+	-- Créer la liste des waypoints
+	local waypoints = {}
+	table.insert(waypoints, startPosition)
+
+	-- Ajouter tous les waypoints dans l'ordre (WP1, WP2, WP3...) ✅ CORRIGÉ
+	for i = 1, 100 do -- Maximum 100 waypoints
+		local waypoint = conveyorPath:FindFirstChild("WP" .. i)
+		if waypoint then
+			table.insert(waypoints, waypoint.Position)
+		else
+			break
+		end
+	end
+
+	table.insert(waypoints, endPosition)
+
+	print("🗺️ Chemin de", #waypoints, "waypoints créé")
+
+	-- Déplacer le brainrot sur chaque waypoint
+	for i, targetPos in ipairs(waypoints) do
+		-- Vérifier que le brainrot existe toujours
+		if not brainrot or not brainrot.Parent or not brainrot.PrimaryPart then
+			return
+		end
+
+		-- Vérifier si le brainrot a été acheté (attribut Owner existe)
+		if brainrot:GetAttribute("Owner") then
+			print("🛑 Brainrot acheté, arrêt du déplacement")
+			return
+		end
+
+		-- Calculer la distance et le temps
+		local currentPos = brainrot.PrimaryPart.Position
+		local distance = (targetPos - currentPos).Magnitude
+		local travelTime = distance / MOVE_SPEED
+
+		-- Créer le tween
+		local tweenInfo = TweenInfo.new(
+			travelTime,
+			Enum.EasingStyle.Linear,
+			Enum.EasingDirection.InOut
+		)
+
+		local tween = TweenService:Create(
+			brainrot.PrimaryPart,
+			tweenInfo,
+			{CFrame = CFrame.new(targetPos)}
+		)
+
+		-- Déplacer
+		tween:Play()
+		tween.Completed:Wait()
+
+		-- Si c'est le dernier waypoint (SpawnPortalB), détruire
+		if i == #waypoints then
+			print("🚪 Brainrot arrivé au SpawnPortalB, destruction")
+			brainrot:Destroy()
+			return
+		end
 	end
 end
 
@@ -80,7 +206,77 @@ local function commandAdd(admin, amount, targetName)
 	return true, message
 end
 
--- ✅ COMMANDE : Spawn(RARITY) - Spawn un brainrot par rareté
+-- ✅ COMMANDE : Reset(PLAYER) - Réinitialiser la base et le Rizz d'un joueur
+local function commandReset(admin, targetName)
+	-- Trouver le joueur cible
+	local target = nil
+	for _, player in pairs(Players:GetPlayers()) do
+		if player.Name:lower():find(targetName:lower()) or player.DisplayName:lower():find(targetName:lower()) then
+			target = player
+			break
+		end
+	end
+
+	if not target then
+		warn("❌ Joueur introuvable:", targetName)
+		return false, "Joueur introuvable: " .. targetName
+	end
+
+	print("🔄 Réinitialisation de", target.Name, "...")
+
+	-- 1. Détruire tous les brainrots du joueur
+	local ownedFolder = workspace:FindFirstChild("OwnedBrainrots")
+	if ownedFolder then
+		for _, brainrot in pairs(ownedFolder:GetChildren()) do
+			if brainrot:IsA("Model") then
+				local owner = brainrot:GetAttribute("Owner")
+				if owner == target.UserId then
+					print("   🗑️ Suppression brainrot:", brainrot.Name)
+					brainrot:Destroy()
+				end
+			end
+		end
+	end
+
+	-- 2. Libérer toutes les platforms
+	local baseData = BaseManager.GetPlayerData(target)
+	if baseData then
+		for _, platform in pairs(baseData.Platforms) do
+			BaseManager.FreePlatform(platform)
+		end
+		print("   ✅ Platforms libérées")
+	end
+
+	-- 3. Réinitialiser les données avec DataManager
+	local resetSuccess = DataManager.ResetData(target)
+
+	if resetSuccess then
+		print("   ✅ Données réinitialisées")
+
+		-- 4. Mettre à jour les leaderstats
+		local leaderstats = target:FindFirstChild("leaderstats")
+		if leaderstats then
+			local rizzValue = leaderstats:FindFirstChild("Rizz")
+			if rizzValue then
+				rizzValue.Value = 1000 -- Valeur par défaut
+			end
+			local levelValue = leaderstats:FindFirstChild("Level")
+			if levelValue then
+				levelValue.Value = 1
+			end
+		end
+
+		local message = string.format("✅ %s a été réinitialisé (Base + Rizz + Brainrots)", target.Name)
+		print("[ADMIN]", admin.Name, "→", message)
+
+		return true, message
+	else
+		warn("❌ Échec de la réinitialisation des données")
+		return false, "Échec de la réinitialisation"
+	end
+end
+
+-- ✅ COMMANDE : Spawn(RARITY) - Spawn un brainrot statique
 local function commandSpawn(admin, rarity)
 	-- Vérifier que le joueur a un personnage
 	local character = admin and admin.Character
@@ -103,6 +299,12 @@ local function commandSpawn(admin, rarity)
 
 		local brainrot = template:Clone()
 
+		-- ✅ CONFIGURER LES ATTRIBUTS DU BRAINROT
+		brainrot:SetAttribute("Rarity", rarity)
+		brainrot:SetAttribute("BasePrice", template:GetAttribute("BasePrice") or 100)
+		brainrot:SetAttribute("RizzPerTick", template:GetAttribute("RizzPerTick") or 1)
+		brainrot:SetAttribute("SpawnTime", tick())
+
 		-- ✅ Ancrer toutes les parts du brainrot
 		for _, part in pairs(brainrot:GetDescendants()) do
 			if part:IsA("BasePart") then
@@ -110,7 +312,8 @@ local function commandSpawn(admin, rarity)
 			end
 		end
 
-		brainrot:MoveTo(Vector3.new(0, 10, 0))
+		-- ✅ UTILISER PivotTo au lieu de MoveTo
+		brainrot:PivotTo(CFrame.new(Vector3.new(0, 10, 0)))
 
 		local brainrotFolder = workspace:FindFirstChild("BrainRot")
 		if not brainrotFolder then
@@ -154,6 +357,12 @@ local function commandSpawn(admin, rarity)
 	-- Cloner le brainrot
 	local brainrot = template:Clone()
 
+	-- ✅ CONFIGURER LES ATTRIBUTS DU BRAINROT
+	brainrot:SetAttribute("Rarity", rarity)
+	brainrot:SetAttribute("BasePrice", template:GetAttribute("BasePrice") or 100)
+	brainrot:SetAttribute("RizzPerTick", template:GetAttribute("RizzPerTick") or 1)
+	brainrot:SetAttribute("SpawnTime", tick())
+
 	-- ✅ Ancrer toutes les parts du brainrot
 	for _, part in pairs(brainrot:GetDescendants()) do
 		if part:IsA("BasePart") then
@@ -164,11 +373,8 @@ local function commandSpawn(admin, rarity)
 	-- Positionner devant le joueur
 	local spawnPosition = rootPart.CFrame * CFrame.new(0, 0, -10) -- 10 studs devant
 
-	if brainrot.PrimaryPart then
-		brainrot:SetPrimaryPartCFrame(spawnPosition)
-	else
-		brainrot:MoveTo(spawnPosition.Position)
-	end
+	-- ✅ UTILISER PivotTo au lieu de SetPrimaryPartCFrame
+	brainrot:PivotTo(spawnPosition)
 
 	-- Parent dans BrainRot folder
 	local brainrotFolder = workspace:FindFirstChild("BrainRot")
@@ -183,6 +389,195 @@ local function commandSpawn(admin, rarity)
 	-- ✅ Message avec rareté ET nom
 	local message = string.format("✅ Brainrot de rareté %s (%s) a bien spawn", rarity, template.Name)
 	print("[ADMIN]", admin.Name, "→", message)
+
+	return true, message
+end
+
+-- ✅ COMMANDE : SpawnMoving(RARITY) - Spawn un brainrot qui se déplace
+local function commandSpawnMoving(admin, rarity)
+	-- Chercher le dossier de templates
+	local brainrotTemplatesFolder = ServerStorage:FindFirstChild("BrainrotTemplates")
+	if not brainrotTemplatesFolder then
+		return false, "Folder BrainrotTemplates introuvable dans ServerStorage"
+	end
+
+	-- Chercher le dossier de rareté
+	local rarityFolder = brainrotTemplatesFolder:FindFirstChild(rarity)
+	if not rarityFolder then
+		return false, "Rareté introuvable: " .. rarity
+	end
+
+	-- Prendre le premier template de cette rareté
+	local template = rarityFolder:FindFirstChildWhichIsA("Model")
+	if not template then
+		return false, "Aucun template trouvé pour: " .. rarity
+	end
+
+	-- Trouver le folder Portal
+	local portalFolder = workspace:FindFirstChild("Portal")
+	if not portalFolder then
+		return false, "Folder 'Portal' introuvable dans Workspace"
+	end
+
+	-- Trouver SpawnPortalA
+	local spawnPortalA = portalFolder:FindFirstChild("SpawnPortalA")
+	if not spawnPortalA then
+		return false, "SpawnPortalA introuvable dans Portal"
+	end
+
+	-- Obtenir la position du SpawnPortalA
+	local startPosition
+	if spawnPortalA.PrimaryPart then
+		startPosition = spawnPortalA.PrimaryPart.Position
+	else
+		local firstPart = spawnPortalA:FindFirstChildWhichIsA("BasePart", true)
+		if firstPart then
+			startPosition = firstPart.Position
+		else
+			return false, "SpawnPortalA n'a pas de PrimaryPart ou BasePart"
+		end
+	end
+
+	-- Cloner le brainrot
+	local brainrot = template:Clone()
+
+	-- ✅ CONFIGURER LES ATTRIBUTS DU BRAINROT
+	brainrot:SetAttribute("Rarity", rarity)
+	brainrot:SetAttribute("BasePrice", template:GetAttribute("BasePrice") or 100)
+	brainrot:SetAttribute("RizzPerTick", template:GetAttribute("RizzPerTick") or 1)
+	brainrot:SetAttribute("SpawnTime", tick())
+
+	-- ✅ Désancrer pour permettre le déplacement
+	for _, part in pairs(brainrot:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Anchored = false
+			part.CanCollide = false
+		end
+	end
+
+	-- Ancrer SEULEMENT le PrimaryPart
+	if brainrot.PrimaryPart then
+		brainrot.PrimaryPart.Anchored = true
+	end
+
+	-- ✅ UTILISER PivotTo au lieu de SetPrimaryPartCFrame
+	brainrot:PivotTo(CFrame.new(startPosition))
+
+	-- Parent dans BrainRot folder
+	local brainrotFolder = workspace:FindFirstChild("BrainRot")
+	if not brainrotFolder then
+		brainrotFolder = Instance.new("Folder")
+		brainrotFolder.Name = "BrainRot"
+		brainrotFolder.Parent = workspace
+	end
+
+	brainrot.Parent = brainrotFolder
+
+	-- ✅ Lancer le déplacement
+	task.spawn(function()
+		moveBrainrotOnPath(brainrot)
+	end)
+
+	-- ✅ Message avec rareté ET nom
+	local message = string.format("✅ Brainrot mobile de rareté %s (%s) spawné au SpawnPortalA", rarity, template.Name)
+	print("[ADMIN]", admin and admin.Name or "Console", "→", message)
+
+	return true, message
+end
+
+-- ✅ COMMANDE : SpawnMovingN(NAME) - Spawn un brainrot mobile par nom
+local function commandSpawnMovingN(admin, brainrotName)
+	-- Chercher le dossier de templates
+	local brainrotTemplatesFolder = ServerStorage:FindFirstChild("BrainrotTemplates")
+	if not brainrotTemplatesFolder then
+		return false, "Folder BrainrotTemplates introuvable dans ServerStorage"
+	end
+
+	-- Chercher dans TOUS les dossiers de rareté
+	local template = nil
+	local foundRarity = nil
+
+	for _, rarityFolder in pairs(brainrotTemplatesFolder:GetChildren()) do
+		local found = rarityFolder:FindFirstChild(brainrotName)
+		if found and found:IsA("Model") then
+			template = found
+			foundRarity = rarityFolder.Name -- ✅ Récupérer la rareté
+			break
+		end
+	end
+
+	if not template then
+		return false, "Brainrot introuvable: " .. brainrotName
+	end
+
+	-- Trouver le folder Portal
+	local portalFolder = workspace:FindFirstChild("Portal")
+	if not portalFolder then
+		return false, "Folder 'Portal' introuvable dans Workspace"
+	end
+
+	-- Trouver SpawnPortalA
+	local spawnPortalA = portalFolder:FindFirstChild("SpawnPortalA")
+	if not spawnPortalA then
+		return false, "SpawnPortalA introuvable dans Portal"
+	end
+
+	-- Obtenir la position du SpawnPortalA
+	local startPosition
+	if spawnPortalA.PrimaryPart then
+		startPosition = spawnPortalA.PrimaryPart.Position
+	else
+		local firstPart = spawnPortalA:FindFirstChildWhichIsA("BasePart", true)
+		if firstPart then
+			startPosition = firstPart.Position
+		else
+			return false, "SpawnPortalA n'a pas de PrimaryPart ou BasePart"
+		end
+	end
+
+	-- Cloner le brainrot
+	local brainrot = template:Clone()
+
+	-- ✅ CONFIGURER LES ATTRIBUTS DU BRAINROT
+	brainrot:SetAttribute("Rarity", foundRarity)
+	brainrot:SetAttribute("BasePrice", template:GetAttribute("BasePrice") or 100)
+	brainrot:SetAttribute("RizzPerTick", template:GetAttribute("RizzPerTick") or 1)
+	brainrot:SetAttribute("SpawnTime", tick())
+
+	-- ✅ Désancrer pour permettre le déplacement
+	for _, part in pairs(brainrot:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Anchored = false
+			part.CanCollide = false
+		end
+	end
+
+	-- Ancrer SEULEMENT le PrimaryPart
+	if brainrot.PrimaryPart then
+		brainrot.PrimaryPart.Anchored = true
+	end
+
+	-- ✅ UTILISER PivotTo au lieu de SetPrimaryPartCFrame
+	brainrot:PivotTo(CFrame.new(startPosition))
+
+	-- Parent dans BrainRot folder
+	local brainrotFolder = workspace:FindFirstChild("BrainRot")
+	if not brainrotFolder then
+		brainrotFolder = Instance.new("Folder")
+		brainrotFolder.Name = "BrainRot"
+		brainrotFolder.Parent = workspace
+	end
+
+	brainrot.Parent = brainrotFolder
+
+	-- ✅ Lancer le déplacement
+	task.spawn(function()
+		moveBrainrotOnPath(brainrot)
+	end)
+
+	-- ✅ Message avec rareté ET nom
+	local message = string.format("✅ Brainrot mobile de rareté %s (%s) spawné au SpawnPortalA", foundRarity, brainrotName)
+	print("[ADMIN]", admin and admin.Name or "Console", "→", message)
 
 	return true, message
 end
@@ -216,6 +611,12 @@ local function commandSpawnName(admin, brainrotName)
 
 		local brainrot = template:Clone()
 
+		-- ✅ CONFIGURER LES ATTRIBUTS DU BRAINROT
+		brainrot:SetAttribute("Rarity", foundRarity)
+		brainrot:SetAttribute("BasePrice", template:GetAttribute("BasePrice") or 100)
+		brainrot:SetAttribute("RizzPerTick", template:GetAttribute("RizzPerTick") or 1)
+		brainrot:SetAttribute("SpawnTime", tick())
+
 		-- ✅ Ancrer toutes les parts du brainrot
 		for _, part in pairs(brainrot:GetDescendants()) do
 			if part:IsA("BasePart") then
@@ -223,7 +624,8 @@ local function commandSpawnName(admin, brainrotName)
 			end
 		end
 
-		brainrot:MoveTo(Vector3.new(0, 10, 0))
+		-- ✅ UTILISER PivotTo au lieu de MoveTo
+		brainrot:PivotTo(CFrame.new(Vector3.new(0, 10, 0)))
 
 		local brainrotFolder = workspace:FindFirstChild("BrainRot")
 		if not brainrotFolder then
@@ -272,6 +674,12 @@ local function commandSpawnName(admin, brainrotName)
 	-- Cloner le brainrot
 	local brainrot = template:Clone()
 
+	-- ✅ CONFIGURER LES ATTRIBUTS DU BRAINROT
+	brainrot:SetAttribute("Rarity", foundRarity)
+	brainrot:SetAttribute("BasePrice", template:GetAttribute("BasePrice") or 100)
+	brainrot:SetAttribute("RizzPerTick", template:GetAttribute("RizzPerTick") or 1)
+	brainrot:SetAttribute("SpawnTime", tick())
+
 	-- ✅ Ancrer toutes les parts du brainrot
 	for _, part in pairs(brainrot:GetDescendants()) do
 		if part:IsA("BasePart") then
@@ -282,11 +690,8 @@ local function commandSpawnName(admin, brainrotName)
 	-- Positionner devant le joueur
 	local spawnPosition = rootPart.CFrame * CFrame.new(0, 0, -10) -- 10 studs devant
 
-	if brainrot.PrimaryPart then
-		brainrot:SetPrimaryPartCFrame(spawnPosition)
-	else
-		brainrot:MoveTo(spawnPosition.Position)
-	end
+	-- ✅ UTILISER PivotTo au lieu de SetPrimaryPartCFrame
+	brainrot:PivotTo(spawnPosition)
 
 	-- Parent dans BrainRot folder
 	local brainrotFolder = workspace:FindFirstChild("BrainRot")
@@ -334,6 +739,42 @@ local function executeCommand(player, message)
 		return
 	end
 
+	-- ✅ COMMANDE: Reset(PLAYER)
+	local resetTarget = command:match("^Reset%((.+)%)$")
+	if resetTarget then
+		local success, result = commandReset(player, resetTarget)
+		if success then
+			print("✅", result)
+		else
+			warn("❌", result)
+		end
+		return
+	end
+
+	-- ✅ COMMANDE: SpawnMovingN(NAME)
+	local movingName = command:match("^SpawnMovingN%((.+)%)$")
+	if movingName then
+		local success, result = commandSpawnMovingN(player, movingName)
+		if success then
+			print("✅", result)
+		else
+			warn("❌", result)
+		end
+		return
+	end
+
+	-- ✅ COMMANDE: SpawnMoving(RARITY)
+	local movingRarity = command:match("^SpawnMoving%((.+)%)$")
+	if movingRarity then
+		local success, result = commandSpawnMoving(player, movingRarity)
+		if success then
+			print("✅", result)
+		else
+			warn("❌", result)
+		end
+		return
+	end
+
 	-- ✅ COMMANDE: Spawn(RARITY)
 	local rarity = command:match("^Spawn%((.+)%)$")
 	if rarity then
@@ -362,7 +803,10 @@ local function executeCommand(player, message)
 	warn("❌ Commande inconnue:", command)
 	print("📋 Commandes disponibles:")
 	print("   " .. COMMAND_PREFIX .. "Add(MONTANT)(JOUEUR) - Ajouter du Rizz")
-	print("   " .. COMMAND_PREFIX .. "Spawn(RARETÉ) - Spawner un brainrot par rareté")
+	print("   " .. COMMAND_PREFIX .. "Reset(JOUEUR) - Réinitialiser un joueur")
+	print("   " .. COMMAND_PREFIX .. "Spawn(RARETÉ) - Spawner un brainrot statique")
+	print("   " .. COMMAND_PREFIX .. "SpawnMoving(RARETÉ) - Spawner un brainrot mobile")
+	print("   " .. COMMAND_PREFIX .. "SpawnMovingN(NOM) - Spawner un brainrot mobile par nom")
 	print("   " .. COMMAND_PREFIX .. "SpawnName(NOM) - Spawner un brainrot par nom")
 end
 
@@ -378,7 +822,10 @@ local function setupPlayer(player)
 		print("👑 [ADMIN]", player.Name, "s'est connecté avec les privilèges admin")
 		print("📋 Commandes disponibles:")
 		print("   " .. COMMAND_PREFIX .. "Add(MONTANT)(JOUEUR)")
+		print("   " .. COMMAND_PREFIX .. "Reset(JOUEUR)")
 		print("   " .. COMMAND_PREFIX .. "Spawn(RARETÉ)")
+		print("   " .. COMMAND_PREFIX .. "SpawnMoving(RARETÉ)")
+		print("   " .. COMMAND_PREFIX .. "SpawnMovingN(NOM)")
 		print("   " .. COMMAND_PREFIX .. "SpawnName(NOM)")
 	end
 end
@@ -413,8 +860,40 @@ _G.AdminCmd = {
 		return success
 	end,
 
+	Reset = function(playerName)
+		-- Trouver le premier admin connecté
+		local admin = nil
+		for _, player in pairs(Players:GetPlayers()) do
+			if isAdmin(player) then
+				admin = player
+				break
+			end
+		end
+
+		if not admin then
+			warn("❌ Aucun admin connecté")
+			return false
+		end
+
+		local success, result = commandReset(admin, playerName)
+		print(result)
+		return success
+	end,
+
 	Spawn = function(rarity)
 		local success, result = commandSpawn(nil, rarity)
+		print(result)
+		return success
+	end,
+
+	SpawnMoving = function(rarity)
+		local success, result = commandSpawnMoving(nil, rarity)
+		print(result)
+		return success
+	end,
+
+	SpawnMovingN = function(name)
+		local success, result = commandSpawnMovingN(nil, name)
 		print(result)
 		return success
 	end,
@@ -425,5 +904,3 @@ _G.AdminCmd = {
 		return success
 	end
 }
-
-print("👑 Admins:", table.concat(ADMINS, ", "))
