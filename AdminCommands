@@ -1,0 +1,429 @@
+-- ServerScriptService/AdminCommands
+-- Système de commandes administrateur
+-- Créé le 2025-11-17 par Adeline-IRIHS
+
+local Players = game:GetService("Players")
+local ServerStorage = game:GetService("ServerStorage")
+
+-- Attendre que les managers soient prêts
+while not _G.DataManager do
+	task.wait(0.5)
+end
+
+local DataManager = _G.DataManager
+
+-- ✅ CONFIGURATION
+local COMMAND_PREFIX = "!" -- ✅ Utilise "!" au lieu de "/"
+
+-- ✅ LISTE DES ADMINS (par UserId ou Username)
+local ADMINS = {
+	"Elouan050709",
+}
+
+-- ✅ FONCTION : Vérifier si un joueur est admin
+local function isAdmin(player)
+	-- Vérifier par Username
+	if table.find(ADMINS, player.Name) then
+		return true
+	end
+
+	-- Vérifier par UserId
+	if table.find(ADMINS, player.UserId) then
+		return true
+	end
+
+	return false
+end
+
+-- ✅ FONCTION : Formater un nombre
+local function formatNumber(num)
+	num = tonumber(num) or 0
+
+	if num >= 1000000 then
+		return string.format("%.1fM", num / 1000000)
+	elseif num >= 1000 then
+		return string.format("%.1fK", num / 1000)
+	else
+		return tostring(math.floor(num))
+	end
+end
+
+-- ✅ COMMANDE : Add(AMOUNT)(PLAYER) - Ajouter du Rizz
+local function commandAdd(admin, amount, targetName)
+	amount = tonumber(amount)
+
+	if not amount then
+		warn("❌ Montant invalide:", amount)
+		return false, "Montant invalide"
+	end
+
+	-- Trouver le joueur cible
+	local target = nil
+	for _, player in pairs(Players:GetPlayers()) do
+		if player.Name:lower():find(targetName:lower()) or player.DisplayName:lower():find(targetName:lower()) then
+			target = player
+			break
+		end
+	end
+
+	if not target then
+		warn("❌ Joueur introuvable:", targetName)
+		return false, "Joueur introuvable: " .. targetName
+	end
+
+	-- Ajouter le Rizz
+	DataManager.AddRizz(target, amount)
+
+	local message = string.format("✅ %s Rizz ajoutés à %s", formatNumber(amount), target.Name)
+	print("[ADMIN]", admin.Name, "→", message)
+
+	return true, message
+end
+
+-- ✅ COMMANDE : Spawn(RARITY) - Spawn un brainrot par rareté
+local function commandSpawn(admin, rarity)
+	-- Vérifier que le joueur a un personnage
+	local character = admin and admin.Character
+	if not character then
+		-- Fallback : spawner au centre du monde
+		local brainrotTemplatesFolder = ServerStorage:FindFirstChild("BrainrotTemplates")
+		if not brainrotTemplatesFolder then
+			return false, "Folder BrainrotTemplates introuvable dans ServerStorage"
+		end
+
+		local rarityFolder = brainrotTemplatesFolder:FindFirstChild(rarity)
+		if not rarityFolder then
+			return false, "Rareté introuvable: " .. rarity
+		end
+
+		local template = rarityFolder:FindFirstChildWhichIsA("Model")
+		if not template then
+			return false, "Aucun template trouvé pour: " .. rarity
+		end
+
+		local brainrot = template:Clone()
+
+		-- ✅ Ancrer toutes les parts du brainrot
+		for _, part in pairs(brainrot:GetDescendants()) do
+			if part:IsA("BasePart") then
+				part.Anchored = true
+			end
+		end
+
+		brainrot:MoveTo(Vector3.new(0, 10, 0))
+
+		local brainrotFolder = workspace:FindFirstChild("BrainRot")
+		if not brainrotFolder then
+			brainrotFolder = Instance.new("Folder")
+			brainrotFolder.Name = "BrainRot"
+			brainrotFolder.Parent = workspace
+		end
+
+		brainrot.Parent = brainrotFolder
+
+		-- ✅ Message avec rareté ET nom
+		local message = string.format("✅ Brainrot de rareté %s (%s) a bien spawn", rarity, template.Name)
+		print("[ADMIN] Console →", message)
+
+		return true, message
+	end
+
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	if not rootPart then
+		return false, "HumanoidRootPart introuvable"
+	end
+
+	-- Chercher le dossier de templates
+	local brainrotTemplatesFolder = ServerStorage:FindFirstChild("BrainrotTemplates")
+	if not brainrotTemplatesFolder then
+		return false, "Folder BrainrotTemplates introuvable dans ServerStorage"
+	end
+
+	-- Chercher le dossier de rareté
+	local rarityFolder = brainrotTemplatesFolder:FindFirstChild(rarity)
+	if not rarityFolder then
+		return false, "Rareté introuvable: " .. rarity
+	end
+
+	-- Prendre le premier template de cette rareté
+	local template = rarityFolder:FindFirstChildWhichIsA("Model")
+	if not template then
+		return false, "Aucun template trouvé pour: " .. rarity
+	end
+
+	-- Cloner le brainrot
+	local brainrot = template:Clone()
+
+	-- ✅ Ancrer toutes les parts du brainrot
+	for _, part in pairs(brainrot:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Anchored = true
+		end
+	end
+
+	-- Positionner devant le joueur
+	local spawnPosition = rootPart.CFrame * CFrame.new(0, 0, -10) -- 10 studs devant
+
+	if brainrot.PrimaryPart then
+		brainrot:SetPrimaryPartCFrame(spawnPosition)
+	else
+		brainrot:MoveTo(spawnPosition.Position)
+	end
+
+	-- Parent dans BrainRot folder
+	local brainrotFolder = workspace:FindFirstChild("BrainRot")
+	if not brainrotFolder then
+		brainrotFolder = Instance.new("Folder")
+		brainrotFolder.Name = "BrainRot"
+		brainrotFolder.Parent = workspace
+	end
+
+	brainrot.Parent = brainrotFolder
+
+	-- ✅ Message avec rareté ET nom
+	local message = string.format("✅ Brainrot de rareté %s (%s) a bien spawn", rarity, template.Name)
+	print("[ADMIN]", admin.Name, "→", message)
+
+	return true, message
+end
+
+-- ✅ COMMANDE : SpawnName(NAME) - Spawn un brainrot par nom exact
+local function commandSpawnName(admin, brainrotName)
+	-- Vérifier que le joueur a un personnage
+	local character = admin and admin.Character
+	if not character then
+		-- Fallback : spawner au centre du monde
+		local brainrotTemplatesFolder = ServerStorage:FindFirstChild("BrainrotTemplates")
+		if not brainrotTemplatesFolder then
+			return false, "Folder BrainrotTemplates introuvable dans ServerStorage"
+		end
+
+		local template = nil
+		local foundRarity = nil
+
+		for _, rarityFolder in pairs(brainrotTemplatesFolder:GetChildren()) do
+			local found = rarityFolder:FindFirstChild(brainrotName)
+			if found and found:IsA("Model") then
+				template = found
+				foundRarity = rarityFolder.Name -- ✅ Récupérer la rareté
+				break
+			end
+		end
+
+		if not template then
+			return false, "Brainrot introuvable: " .. brainrotName
+		end
+
+		local brainrot = template:Clone()
+
+		-- ✅ Ancrer toutes les parts du brainrot
+		for _, part in pairs(brainrot:GetDescendants()) do
+			if part:IsA("BasePart") then
+				part.Anchored = true
+			end
+		end
+
+		brainrot:MoveTo(Vector3.new(0, 10, 0))
+
+		local brainrotFolder = workspace:FindFirstChild("BrainRot")
+		if not brainrotFolder then
+			brainrotFolder = Instance.new("Folder")
+			brainrotFolder.Name = "BrainRot"
+			brainrotFolder.Parent = workspace
+		end
+
+		brainrot.Parent = brainrotFolder
+
+		-- ✅ Message avec rareté ET nom
+		local message = string.format("✅ Brainrot de rareté %s (%s) a bien spawn", foundRarity, brainrotName)
+		print("[ADMIN] Console →", message)
+
+		return true, message
+	end
+
+	local rootPart = character:FindFirstChild("HumanoidRootPart")
+	if not rootPart then
+		return false, "HumanoidRootPart introuvable"
+	end
+
+	-- Chercher le dossier de templates
+	local brainrotTemplatesFolder = ServerStorage:FindFirstChild("BrainrotTemplates")
+	if not brainrotTemplatesFolder then
+		return false, "Folder BrainrotTemplates introuvable dans ServerStorage"
+	end
+
+	-- Chercher dans TOUS les dossiers de rareté
+	local template = nil
+	local foundRarity = nil
+
+	for _, rarityFolder in pairs(brainrotTemplatesFolder:GetChildren()) do
+		local found = rarityFolder:FindFirstChild(brainrotName)
+		if found and found:IsA("Model") then
+			template = found
+			foundRarity = rarityFolder.Name -- ✅ Récupérer la rareté
+			break
+		end
+	end
+
+	if not template then
+		return false, "Brainrot introuvable: " .. brainrotName
+	end
+
+	-- Cloner le brainrot
+	local brainrot = template:Clone()
+
+	-- ✅ Ancrer toutes les parts du brainrot
+	for _, part in pairs(brainrot:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Anchored = true
+		end
+	end
+
+	-- Positionner devant le joueur
+	local spawnPosition = rootPart.CFrame * CFrame.new(0, 0, -10) -- 10 studs devant
+
+	if brainrot.PrimaryPart then
+		brainrot:SetPrimaryPartCFrame(spawnPosition)
+	else
+		brainrot:MoveTo(spawnPosition.Position)
+	end
+
+	-- Parent dans BrainRot folder
+	local brainrotFolder = workspace:FindFirstChild("BrainRot")
+	if not brainrotFolder then
+		brainrotFolder = Instance.new("Folder")
+		brainrotFolder.Name = "BrainRot"
+		brainrotFolder.Parent = workspace
+	end
+
+	brainrot.Parent = brainrotFolder
+
+	-- ✅ Message avec rareté ET nom
+	local message = string.format("✅ Brainrot de rareté %s (%s) a bien spawn", foundRarity, brainrotName)
+	print("[ADMIN]", admin.Name, "→", message)
+
+	return true, message
+end
+
+-- ✅ FONCTION : Parser et exécuter une commande
+local function executeCommand(player, message)
+	-- Vérifier que le joueur est admin
+	if not isAdmin(player) then
+		return
+	end
+
+	-- Vérifier que le message commence par le préfixe
+	if message:sub(1, 1) ~= COMMAND_PREFIX then
+		return
+	end
+
+	-- Retirer le préfixe
+	local command = message:sub(2)
+
+	print("🔧 [ADMIN] Commande de", player.Name, ":", command)
+
+	-- ✅ COMMANDE: Add(AMOUNT)(PLAYER)
+	local amount, targetName = command:match("^Add%((%d+)%)%((.+)%)$")
+	if amount and targetName then
+		local success, result = commandAdd(player, amount, targetName)
+		if success then
+			print("✅", result)
+		else
+			warn("❌", result)
+		end
+		return
+	end
+
+	-- ✅ COMMANDE: Spawn(RARITY)
+	local rarity = command:match("^Spawn%((.+)%)$")
+	if rarity then
+		local success, result = commandSpawn(player, rarity)
+		if success then
+			print("✅", result)
+		else
+			warn("❌", result)
+		end
+		return
+	end
+
+	-- ✅ COMMANDE: SpawnName(NAME)
+	local brainrotName = command:match("^SpawnName%((.+)%)$")
+	if brainrotName then
+		local success, result = commandSpawnName(player, brainrotName)
+		if success then
+			print("✅", result)
+		else
+			warn("❌", result)
+		end
+		return
+	end
+
+	-- Commande inconnue
+	warn("❌ Commande inconnue:", command)
+	print("📋 Commandes disponibles:")
+	print("   " .. COMMAND_PREFIX .. "Add(MONTANT)(JOUEUR) - Ajouter du Rizz")
+	print("   " .. COMMAND_PREFIX .. "Spawn(RARETÉ) - Spawner un brainrot par rareté")
+	print("   " .. COMMAND_PREFIX .. "SpawnName(NOM) - Spawner un brainrot par nom")
+end
+
+-- ✅ FONCTION : Setup d'un joueur
+local function setupPlayer(player)
+	player.Chatted:Connect(function(message)
+		executeCommand(player, message)
+	end)
+
+	-- Message de bienvenue pour les admins
+	if isAdmin(player) then
+		task.wait(1)
+		print("👑 [ADMIN]", player.Name, "s'est connecté avec les privilèges admin")
+		print("📋 Commandes disponibles:")
+		print("   " .. COMMAND_PREFIX .. "Add(MONTANT)(JOUEUR)")
+		print("   " .. COMMAND_PREFIX .. "Spawn(RARETÉ)")
+		print("   " .. COMMAND_PREFIX .. "SpawnName(NOM)")
+	end
+end
+
+-- ✅ ÉCOUTER LES NOUVEAUX JOUEURS
+Players.PlayerAdded:Connect(setupPlayer)
+
+-- ✅ CONFIGURER LES JOUEURS DÉJÀ PRÉSENTS (important pour Studio)
+for _, player in pairs(Players:GetPlayers()) do
+	setupPlayer(player)
+end
+
+-- ✅ API GLOBALE pour exécuter des commandes depuis la console
+_G.AdminCmd = {
+	Add = function(amount, playerName)
+		-- Trouver le premier admin connecté
+		local admin = nil
+		for _, player in pairs(Players:GetPlayers()) do
+			if isAdmin(player) then
+				admin = player
+				break
+			end
+		end
+
+		if not admin then
+			warn("❌ Aucun admin connecté")
+			return false
+		end
+
+		local success, result = commandAdd(admin, amount, playerName)
+		print(result)
+		return success
+	end,
+
+	Spawn = function(rarity)
+		local success, result = commandSpawn(nil, rarity)
+		print(result)
+		return success
+	end,
+
+	SpawnName = function(name)
+		local success, result = commandSpawnName(nil, name)
+		print(result)
+		return success
+	end
+}
+
+print("👑 Admins:", table.concat(ADMINS, ", "))
