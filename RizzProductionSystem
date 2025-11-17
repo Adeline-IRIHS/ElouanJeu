@@ -1,0 +1,326 @@
+-- ServerScriptService/RizzProductionSystem
+-- Système de production et collecte de Rizz par les brainrots
+-- Créé le 2025-11-17 par Adeline-IRIHS
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+-- Attendre que les managers soient prêts
+while not _G.DataManager do
+	task.wait(0.5)
+end
+
+while not _G.BaseManager do
+	task.wait(0.5)
+end
+
+local DataManager = _G.DataManager
+local BaseManager = _G.BaseManager
+
+-- Configuration
+local PRODUCTION_INTERVAL = 1 -- Produire du Rizz toutes les 1 seconde
+local TEXT_UPDATE_INTERVAL = 0.5 -- Mettre à jour les textes 2 fois par seconde
+local GUI_VISIBLE_DISTANCE = 40 -- Distance max pour voir le GUI
+
+-- ✅ FONCTION : Créer le BillboardGui au-dessus du Collector
+local function createCollectGui(collector)
+	-- Vérifier si le GUI existe déjà
+	local existingGui = collector:FindFirstChild("CollectGui")
+	if existingGui then
+		return existingGui
+	end
+
+	-- Créer le BillboardGui
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "CollectGui"
+	billboard.Adornee = collector
+	billboard.Size = UDim2.new(0, 150, 0, 70)
+	billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+	billboard.AlwaysOnTop = true
+	billboard.Parent = collector
+
+	-- Frame conteneur
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1, 0, 1, 0)
+	frame.BackgroundTransparency = 1
+	frame.Parent = billboard
+
+	-- Texte "Collect"
+	local collectLabel = Instance.new("TextLabel")
+	collectLabel.Name = "CollectLabel"
+	collectLabel.Size = UDim2.new(1, 0, 0.45, 0)
+	collectLabel.Position = UDim2.new(0, 0, 0.05, 0)
+	collectLabel.BackgroundTransparency = 1
+	collectLabel.Text = "Collect"
+	collectLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	collectLabel.TextScaled = true
+	collectLabel.Font = Enum.Font.GothamBold
+	collectLabel.TextStrokeTransparency = 0.5
+	collectLabel.Parent = frame
+
+	-- Texte pour le montant
+	local amountLabel = Instance.new("TextLabel")
+	amountLabel.Name = "AmountLabel"
+	amountLabel.Size = UDim2.new(1, 0, 0.45, 0)
+	amountLabel.Position = UDim2.new(0, 0, 0.5, 0)
+	amountLabel.BackgroundTransparency = 1
+	amountLabel.Text = "0 💖"
+	amountLabel.TextColor3 = Color3.fromRGB(255, 100, 200)
+	amountLabel.TextScaled = true
+	amountLabel.Font = Enum.Font.GothamBold
+	amountLabel.TextStrokeTransparency = 0.5
+	amountLabel.Parent = frame
+
+	return billboard
+end
+
+-- ✅ FONCTION : Formater le nombre de Rizz
+local function formatRizz(amount)
+	amount = math.floor(amount)
+
+	if amount >= 1000000 then
+		return string.format("%.1fM", amount / 1000000)
+	elseif amount >= 1000 then
+		return string.format("%.1fK", amount / 1000)
+	else
+		return tostring(amount)
+	end
+end
+
+-- ✅ FONCTION : Mettre à jour le texte du GUI
+local function updateCollectGui(collector, amount)
+	local gui = collector:FindFirstChild("CollectGui")
+	if not gui then return end
+
+	local frame = gui:FindFirstChild("Frame")
+	if not frame then return end
+
+	local amountLabel = frame:FindFirstChild("AmountLabel")
+	if not amountLabel then return end
+
+	-- Mettre à jour le texte
+	if amount > 0 then
+		amountLabel.Text = formatRizz(amount) .. " 💖"
+		amountLabel.TextColor3 = Color3.fromRGB(255, 100, 200)
+	else
+		amountLabel.Text = "0 💖"
+		amountLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+	end
+end
+
+-- ✅ FONCTION : Trouver le brainrot associé à un Collector (même SlotNumber)
+local function findBrainrotForCollector(player, slotNumber)
+	local ownedFolder = workspace:FindFirstChild("OwnedBrainrots")
+	if not ownedFolder then return nil end
+
+	for _, brainrot in pairs(ownedFolder:GetChildren()) do
+		if brainrot:IsA("Model") then
+			local owner = brainrot:GetAttribute("Owner")
+			local atBase = brainrot:GetAttribute("AtBase")
+			local brainrotSlot = brainrot:GetAttribute("SlotNumber")
+
+			-- ✅ Vérifier que c'est le bon joueur ET le bon slot
+			if owner == player.UserId and atBase and brainrotSlot == slotNumber then
+				return brainrot
+			end
+		end
+	end
+
+	return nil
+end
+
+-- ✅ FONCTION : Production de Rizz par intervalle
+local function productionLoop()
+	while true do
+		task.wait(PRODUCTION_INTERVAL)
+
+		local ownedFolder = workspace:FindFirstChild("OwnedBrainrots")
+		if not ownedFolder then continue end
+
+		-- Pour chaque brainrot dans la base
+		for _, brainrot in pairs(ownedFolder:GetChildren()) do
+			if not brainrot:IsA("Model") then continue end
+
+			local owner = brainrot:GetAttribute("Owner")
+			local atBase = brainrot:GetAttribute("AtBase")
+			local rizzPerTick = brainrot:GetAttribute("RizzPerTick")
+
+			if owner and atBase and rizzPerTick then
+				-- Produire du Rizz
+				local currentStored = brainrot:GetAttribute("StoredRizz") or 0
+				local newStored = currentStored + rizzPerTick
+				brainrot:SetAttribute("StoredRizz", newStored)
+			end
+		end
+	end
+end
+
+-- ✅ FONCTION : Mettre à jour les GUI de collecte
+local function updateGuiLoop()
+	while true do
+		task.wait(TEXT_UPDATE_INTERVAL)
+
+		for _, player in pairs(Players:GetPlayers()) do
+			local baseData = BaseManager.GetPlayerData(player)
+			if not baseData then continue end
+
+			local playerBase = baseData.Base
+			if not playerBase then continue end
+
+			local character = player.Character
+			if not character then continue end
+
+			local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+			if not humanoidRootPart then continue end
+
+			-- Chercher TOUS les Collectors dans la base
+			for _, descendant in pairs(playerBase:GetDescendants()) do
+				if descendant.Name == "Collector" and descendant:IsA("BasePart") then
+					-- Calculer la distance
+					local distance = (descendant.Position - humanoidRootPart.Position).Magnitude
+
+					local gui = descendant:FindFirstChild("CollectGui")
+
+					if distance <= GUI_VISIBLE_DISTANCE then
+						-- ✅ Assez proche : afficher le GUI
+						if not gui then
+							gui = createCollectGui(descendant)
+						end
+
+						if gui then
+							gui.Enabled = true
+
+							-- Trouver le SlotNumber de ce Collector
+							local tableModel = descendant.Parent
+							if tableModel and tableModel:IsA("Model") then
+								local tableName = tableModel.Name
+								local slotNumber = tonumber(tableName:match("%d+"))
+
+								if slotNumber then
+									-- Trouver le brainrot associé
+									local brainrot = findBrainrotForCollector(player, slotNumber)
+
+									if brainrot then
+										local stored = brainrot:GetAttribute("StoredRizz") or 0
+										updateCollectGui(descendant, stored)
+									else
+										updateCollectGui(descendant, 0)
+									end
+								end
+							end
+						end
+					else
+						-- ❌ Trop loin : masquer le GUI
+						if gui then
+							gui.Enabled = false
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+-- ✅ FONCTION : Collecter le Rizz stocké d'UN brainrot spécifique
+local function collectRizzFromBrainrot(player, slotNumber)
+	local brainrot = findBrainrotForCollector(player, slotNumber)
+	if not brainrot then return 0 end
+
+	local stored = brainrot:GetAttribute("StoredRizz") or 0
+
+	if stored > 0 then
+		brainrot:SetAttribute("StoredRizz", 0) -- Réinitialiser
+		DataManager.AddRizz(player, stored)
+		print("💰", player.Name, "a collecté", stored, "Rizz du Slot", slotNumber, "!")
+		return stored
+	end
+
+	return 0
+end
+
+-- ✅ FONCTION : Configurer les Collectors pour la collecte
+local function setupCollectors()
+	-- Vérifier toutes les 2 secondes s'il y a de nouveaux Collectors
+	task.spawn(function()
+		while true do
+			task.wait(2)
+
+			for _, player in pairs(Players:GetPlayers()) do
+				local baseData = BaseManager.GetPlayerData(player)
+				if not baseData then continue end
+
+				local playerBase = baseData.Base
+				if not playerBase then continue end
+
+				-- Chercher TOUS les Collectors dans la base
+				for _, descendant in pairs(playerBase:GetDescendants()) do
+					if descendant.Name == "Collector" and descendant:IsA("BasePart") then
+						-- Vérifier si on a déjà configuré ce bouton
+						if descendant:GetAttribute("SetupDone") then continue end
+
+						-- Marquer comme configuré
+						descendant:SetAttribute("SetupDone", true)
+
+						-- Trouver le SlotNumber
+						local tableModel = descendant.Parent
+						local slotNumber = nil
+
+						if tableModel and tableModel:IsA("Model") then
+							local tableName = tableModel.Name
+							slotNumber = tonumber(tableName:match("%d+"))
+						end
+
+						if not slotNumber then continue end
+
+						-- Créer le GUI (invisible au départ)
+						local gui = createCollectGui(descendant)
+						gui.Enabled = false
+
+						-- Événement Touched
+						descendant.Touched:Connect(function(hit)
+							local character = hit.Parent
+							local humanoid = character:FindFirstChildOfClass("Humanoid")
+							if not humanoid then return end
+
+							local touchingPlayer = Players:GetPlayerFromCharacter(character)
+							if not touchingPlayer or touchingPlayer ~= player then return end
+
+							-- Collecter le Rizz de CE brainrot uniquement
+							local collected = collectRizzFromBrainrot(player, slotNumber)
+
+							if collected > 0 then
+								-- Effet visuel
+								local gui = descendant:FindFirstChild("CollectGui")
+								if gui then
+									local frame = gui:FindFirstChild("Frame")
+									if frame then
+										local amountLabel = frame:FindFirstChild("AmountLabel")
+										if amountLabel then
+											-- Animation de collecte
+											amountLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+											task.wait(0.3)
+											amountLabel.TextColor3 = Color3.fromRGB(255, 100, 200)
+										end
+									end
+								end
+							end
+						end)
+					end
+				end
+			end
+		end
+	end)
+end
+
+-- ✅ DÉMARRAGE DU SYSTÈME
+task.spawn(productionLoop)
+task.spawn(updateGuiLoop)
+setupCollectors()
+
+print("✅ RizzProductionSystem initialisé !")
+
+-- ✅ API Globale
+_G.RizzProductionSystem = {
+	CollectRizzFromBrainrot = collectRizzFromBrainrot,
+	FormatRizz = formatRizz
+}
