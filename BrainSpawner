@@ -1,0 +1,296 @@
+-- ServerScriptService/BrainSpawner (système 9 raretés + spawns garantis)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+
+local brainsFolder = Workspace:WaitForChild("BrainRot")
+local pathFolder = Workspace:WaitForChild("ConveyorPath")
+local spawnPart = Workspace:WaitForChild("Portal"):WaitForChild("SpawnPortalA")
+local templatesFolder = ServerStorage:WaitForChild("BrainrotTemplates")
+
+local NORMAL_SPAWN_INTERVAL = 5
+local PLAYER_WALK_SPEED = 16
+local BRAINROT_SPEED = PLAYER_WALK_SPEED * 0.75 -- 75% de la vitesse du joueur = 12 studs/seconde
+
+-- Définition des raretés avec probabilités
+local RARITIES = {
+	{Name = "Noob", Probability = 0}, -- pas dans le spawn normal (optionnel)
+	{Name = "Common", Probability = 0.40}, -- 40%
+	{Name = "Uncommon", Probability = 0.30}, -- 30%
+	{Name = "Rare", Probability = 0.15}, -- 15%
+	{Name = "Epic", Probability = 0.14}, -- 14%
+	{Name = "Mythic", Probability = 0.009}, -- 0.9%
+	{Name = "Legendary", Probability = 0.0009}, -- 0.09%
+	{Name = "Secret", Probability = 0.000099}, -- 0.0099%
+	{Name = "SuperSecret", Probability = 0.000001}, -- 0.0001%
+}
+
+-- Timers pour spawns garantis
+local nextEpicTime = tick() + 60 -- 1 minute
+local nextMythicTime = tick() + 600 -- 10 minutes
+local nextLegendaryTime = tick() + 3600 -- 1 heure
+
+-- Récupérer tous les modèles d'une rareté
+local function getTemplatesForRarity(rarityName)
+	local folder = templatesFolder:FindFirstChild(rarityName)
+	if not folder then
+		warn("⚠️ Dossier manquant pour rareté:", rarityName)
+		return {}
+	end
+	local templates = {}
+	for _, model in pairs(folder:GetChildren()) do
+		if model:IsA("Model") then
+			table.insert(templates, model)
+		end
+	end
+	return templates
+end
+
+-- Choisir une rareté selon les probabilités
+local function pickRarityRandom()
+	local roll = math.random()
+	local cumul = 0
+
+	for _, rar in ipairs(RARITIES) do
+		cumul = cumul + rar.Probability
+		if roll <= cumul then
+			return rar.Name
+		end
+	end
+
+	return "Common" -- fallback
+end
+
+-- Choisir un template aléatoire dans une rareté
+local function pickRandomTemplate(rarityName)
+	local templates = getTemplatesForRarity(rarityName)
+	if #templates == 0 then
+		warn("⚠️ Aucun template pour rareté:", rarityName)
+		return nil
+	end
+	return templates[math.random(1, #templates)]
+end
+
+-- Récupérer les waypoints
+local function getWaypoints()
+	local wps = {}
+	for i = 1, 999 do
+		local name = "WP" .. i
+		local p = pathFolder:FindFirstChild(name)
+		if not p then break end
+		table.insert(wps, p)
+	end
+	return wps
+end
+
+local waypoints = getWaypoints()
+if #waypoints == 0 then
+	warn("⚠️ Pas de waypoints dans ConveyorPath")
+else
+	print("✅ Waypoints détectés:", #waypoints)	
+end
+
+-- Créer et spawner un brainrot
+local function createBrain(rarityName)
+	local template = pickRandomTemplate(rarityName)
+	if not template then
+		warn("Impossible de spawner:", rarityName)
+		return nil
+	end
+
+	local model = template:Clone()
+	model.Name = "Brainrot"
+
+	-- S'assurer qu'il y a un PrimaryPart AVANT de cloner
+	if not model.PrimaryPart then
+		local rootPart = model:FindFirstChild("RootPart") or model:FindFirstChild("FakeRootPart") or model:FindFirstChildWhichIsA("BasePart")
+		if rootPart then
+			model.PrimaryPart = rootPart
+		end
+	end
+
+	model.Parent = brainsFolder
+
+	-- Trouver le Part principal
+	local body = model.PrimaryPart or model:FindFirstChild("Body") or model:FindFirstChildWhichIsA("BasePart")
+
+	if not body then
+		warn("⚠️ Modèle", template.Name, "sans Part principal")
+		model:Destroy()
+		return nil
+	end
+
+	-- Si body n'est pas le PrimaryPart, le définir
+	if not model.PrimaryPart then
+		model.PrimaryPart = body
+	end
+
+	-- Récupérer prix et production depuis les Attributes du template
+	local basePrice = template:GetAttribute("BasePrice") or 10
+	local rizzPerTick = template:GetAttribute("RizzPerTick") or 1
+
+	-- Attributs du brainrot spawné
+	model:SetAttribute("Rarity", rarityName)
+	model:SetAttribute("BasePrice", basePrice)
+	model:SetAttribute("CurrentPrice", basePrice)
+	model:SetAttribute("RizzPerTick", rizzPerTick)
+	model:SetAttribute("HolderUserId", nil)
+	model:SetAttribute("AtBase", false)
+	model:SetAttribute("StoredRizz", 0)
+
+	-- Position de spawn (gérer Model ou Part)
+	local spawnPosition
+	if spawnPart:IsA("Model") then
+		if spawnPart.PrimaryPart then
+			spawnPosition = spawnPart.PrimaryPart.Position
+		else
+			local firstPart = spawnPart:FindFirstChildWhichIsA("BasePart")
+			if firstPart then
+				spawnPosition = firstPart.Position
+			else
+				warn("⚠️ SpawnPortalA (Model) sans PrimaryPart ni BasePart")
+				model:Destroy()
+				return nil
+			end
+		end
+	else
+		spawnPosition = spawnPart.Position
+	end
+
+
+	model:PivotTo(CFrame.new(spawnPosition + Vector3.new(0, -16, -10)))
+
+	-- Rendre non-collidable et ancré
+	for _, part in pairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.CanCollide = false
+			part.Anchored = true
+		end
+	end
+
+	coroutine.wrap(function()
+		-- S'assurer que le modèle a un PrimaryPart
+		if not model.PrimaryPart then
+			model.PrimaryPart = body
+		end
+
+		for i, wp in ipairs(waypoints) do
+			-- Vérifier si le brainrot existe toujours
+			if not model.Parent then return end
+
+			-- ✅ NOUVEAU : Vérifier si le brainrot a été acheté
+			if model:GetAttribute("Owner") then
+				print("🛑 Brainrot acheté, arrêt du déplacement sur waypoints")
+				return -- Stopper le mouvement
+			end
+
+			local startCFrame = model:GetPrimaryPartCFrame()
+			local targetPos = wp.Position + Vector3.new(0, 3, 0)
+			local targetCFrame = CFrame.new(targetPos)
+
+			-- Calculer la distance et le temps
+			local distance = (targetPos - startCFrame.Position).Magnitude
+			local duration = distance / BRAINROT_SPEED
+
+			-- Créer un CFrameValue
+			local CF = Instance.new("CFrameValue")
+			CF.Value = startCFrame
+			CF.Name = "CF" -- ← IMPORTANT pour que BrainrotPurchaseSystem puisse le détruire
+
+			-- Connecter le Changed pour bouger le modèle
+			local connection = CF.Changed:Connect(function()
+				if model and model.Parent then
+					-- ✅ NOUVEAU : Re-vérifier pendant le déplacement
+					if model:GetAttribute("Owner") then
+						if connection then
+							pcall(function() connection:Disconnect() end)
+						end
+						CF:Destroy()
+						return
+					end
+					model:SetPrimaryPartCFrame(CF.Value)
+				end
+			end)
+
+			-- TweenInfo
+			local tweenInfo = TweenInfo.new(
+				duration,
+				Enum.EasingStyle.Linear,
+				Enum.EasingDirection.Out
+			)
+
+			-- Créer et jouer le Tween sur le CFrameValue
+			local tween = TweenService:Create(CF, tweenInfo, {Value = targetCFrame})
+			tween:Play()
+			tween.Completed:Wait()
+
+			-- Nettoyer
+			if connection then
+				pcall(function()
+					if connection then
+						pcall(function() connection:Disconnect() end)
+					end
+				end)
+			end
+			if CF then
+				pcall(function()
+					CF:Destroy()
+				end)
+			end
+
+			if model:GetAttribute("Owner") then
+
+				return
+			end
+		end
+
+		if model and model.Parent then
+			print("🗑️ Brainrot", model:GetAttribute("Rarity"), "a parcouru tous les waypoints → détruit")
+			model:Destroy()
+		end
+	end)()
+end
+
+-- Vérifier les spawns garantis
+local function checkGuaranteedSpawns()
+	local now = tick()
+
+	-- Epic toutes les minutes
+	if now >= nextEpicTime then
+		nextEpicTime = now + 60
+		return "Epic"
+	end
+
+	-- Mythic toutes les 10 minutes
+	if now >= nextMythicTime then
+		nextMythicTime = now + 600
+		return "Mythic"
+	end
+
+	-- Legendary toutes les heures
+	if now >= nextLegendaryTime then
+		nextLegendaryTime = now + 3600
+		return "Legendary"
+	end
+
+	return nil
+end
+
+-- Boucle principale de spawn
+while true do
+	wait(NORMAL_SPAWN_INTERVAL)
+
+	-- Vérifier si un spawn garanti doit se produire
+	local guaranteedRarity = checkGuaranteedSpawns()
+
+	local rarityToSpawn
+	if guaranteedRarity then
+		rarityToSpawn = guaranteedRarity
+		print("⏰ Spawn garanti:", guaranteedRarity)
+	else
+		rarityToSpawn = pickRarityRandom()
+	end
+
+	createBrain(rarityToSpawn)
+end
