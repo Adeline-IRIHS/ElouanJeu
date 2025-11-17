@@ -1,0 +1,239 @@
+-- ServerScriptService/DataManager
+-- Système de sauvegarde des données des joueurs
+-- Créé le 2025-11-16 par Adeline-IRIHS
+
+local Players = game:GetService("Players")
+local DataStoreService = game:GetService("DataStoreService")
+
+-- DataStore
+local PlayerDataStore = DataStoreService:GetDataStore("PlayerData_v1") -- Change la version si tu veux reset les données
+
+-- Structure de données par défaut
+local DEFAULT_DATA = {
+	Rizz = 0, -- Monnaie du joueur
+	BaseNumber = nil, -- Quelle base il a choisi (1 à 8, nil = aucune)
+	Brainrots = {}, -- Liste des brainrots achetés
+	Floors = {1}, -- Étages débloqués (commence avec Floor 1)
+	LastSave = os.time()
+}
+
+-- Données des joueurs en mémoire
+local playerData = {}
+
+-- Fonction pour charger les données d'un joueur
+local function loadPlayerData(player)
+	local userId = player.UserId
+	local success, data = pcall(function()
+		return PlayerDataStore:GetAsync("Player_" .. userId)
+	end)
+
+	if success then
+		if data then
+			-- Données trouvées, les charger
+			playerData[userId] = data
+			warn("✅ Données chargées pour", player.Name, "- Rizz:", data.Rizz)
+		else
+			-- Nouveau joueur, créer des données par défaut
+			playerData[userId] = {
+				Rizz = DEFAULT_DATA.Rizz,
+				BaseNumber = DEFAULT_DATA.BaseNumber,
+				Brainrots = {},
+				Floors = {1},
+				LastSave = os.time()
+			}
+			warn("🆕 Nouveau joueur:", player.Name, "- Données par défaut créées")
+		end
+	else
+		-- Erreur de chargement
+		warn("❌ Erreur de chargement pour", player.Name, "- Données par défaut utilisées")
+		playerData[userId] = {
+			Rizz = DEFAULT_DATA.Rizz,
+			BaseNumber = DEFAULT_DATA.BaseNumber,
+			Brainrots = {},
+			Floors = {1},
+			LastSave = os.time()
+		}
+	end
+
+	-- Créer les leaderstats (affichage dans la liste des joueurs)
+	local leaderstats = Instance.new("Folder")
+	leaderstats.Name = "leaderstats"
+	leaderstats.Parent = player
+
+	local rizzValue = Instance.new("IntValue")
+	rizzValue.Name = "Rizz"
+	rizzValue.Value = playerData[userId].Rizz
+	rizzValue.Parent = leaderstats
+
+	return playerData[userId]
+end
+
+-- Fonction pour sauvegarder les données d'un joueur
+local function savePlayerData(player)
+	local userId = player.UserId
+	local data = playerData[userId]
+
+	if not data then
+		warn("⚠️ Aucune donnée à sauvegarder pour", player.Name)
+		return false
+	end
+
+	-- Mettre à jour le timestamp
+	data.LastSave = os.time()
+
+	-- Sauvegarder
+	local success, errorMessage = pcall(function()
+		PlayerDataStore:SetAsync("Player_" .. userId, data)
+	end)
+
+	if success then
+		warn("💾 Données sauvegardées pour", player.Name)
+		return true
+	else
+		warn("❌ Erreur de sauvegarde pour", player.Name, ":", errorMessage)
+		return false
+	end
+end
+
+-- Quand un joueur rejoint
+Players.PlayerAdded:Connect(function(player)
+	loadPlayerData(player)
+end)
+
+-- Quand un joueur quitte
+Players.PlayerRemoving:Connect(function(player)
+	savePlayerData(player)
+	playerData[player.UserId] = nil
+end)
+
+-- Sauvegarde automatique toutes les 5 minutes
+task.spawn(function()
+	while true do
+		task.wait(300) -- 5 minutes
+		for _, player in pairs(Players:GetPlayers()) do
+			savePlayerData(player)
+		end
+		warn("🔄 Sauvegarde automatique effectuée")
+	end
+end)
+
+-- Sauvegarde avant fermeture du serveur
+game:BindToClose(function()
+	warn("🛑 Serveur en cours de fermeture, sauvegarde de tous les joueurs...")
+	for _, player in pairs(Players:GetPlayers()) do
+		savePlayerData(player)
+	end
+	task.wait(3) -- Attendre que les sauvegardes se terminent
+end)
+
+-- Fonctions globales accessibles par d'autres scripts
+_G.DataManager = {
+	-- Obtenir les données d'un joueur
+	GetData = function(player)
+		return playerData[player.UserId]
+	end,
+
+	-- Obtenir le Rizz d'un joueur
+	GetRizz = function(player)
+		local data = playerData[player.UserId]
+		return data and data.Rizz or 0
+	end,
+
+	-- Ajouter du Rizz
+	AddRizz = function(player, amount)
+		local data = playerData[player.UserId]
+		if data then
+			data.Rizz = data.Rizz + amount
+
+			-- Mettre à jour les leaderstats
+			local leaderstats = player:FindFirstChild("leaderstats")
+			if leaderstats then
+				local rizzValue = leaderstats:FindFirstChild("Rizz")
+				if rizzValue then
+					rizzValue.Value = data.Rizz
+				end
+			end
+
+			return true
+		end
+		return false
+	end,
+
+	-- Retirer du Rizz
+	RemoveRizz = function(player, amount)
+		local data = playerData[player.UserId]
+		if data and data.Rizz >= amount then
+			data.Rizz = data.Rizz - amount
+
+			-- Mettre à jour les leaderstats
+			local leaderstats = player:FindFirstChild("leaderstats")
+			if leaderstats then
+				local rizzValue = leaderstats:FindFirstChild("Rizz")
+				if rizzValue then
+					rizzValue.Value = data.Rizz
+				end
+			end
+
+			return true
+		end
+		return false
+	end,
+
+	-- Définir la base du joueur
+	SetBase = function(player, baseNumber)
+		local data = playerData[player.UserId]
+		if data then
+			data.BaseNumber = baseNumber
+			return true
+		end
+		return false
+	end,
+
+	-- Obtenir la base du joueur
+	GetBase = function(player)
+		local data = playerData[player.UserId]
+		return data and data.BaseNumber or nil
+	end,
+
+	-- Ajouter un brainrot
+	AddBrainrot = function(player, brainrotData)
+		local data = playerData[player.UserId]
+		if data then
+			table.insert(data.Brainrots, brainrotData)
+			return true
+		end
+		return false
+	end,
+
+	-- Obtenir tous les brainrots
+	GetBrainrots = function(player)
+		local data = playerData[player.UserId]
+		return data and data.Brainrots or {}
+	end,
+
+	-- Débloquer un étage
+	UnlockFloor = function(player, floorNumber)
+		local data = playerData[player.UserId]
+		if data then
+			if not table.find(data.Floors, floorNumber) then
+				table.insert(data.Floors, floorNumber)
+				table.sort(data.Floors)
+				return true
+			end
+		end
+		return false
+	end,
+
+	-- Obtenir les étages débloqués
+	GetFloors = function(player)
+		local data = playerData[player.UserId]
+		return data and data.Floors or {1}
+	end,
+
+	-- Sauvegarder manuellement
+	SaveData = function(player)
+		return savePlayerData(player)
+	end
+}
+
+warn("💾 DataManager initialisé - Prêt à sauvegarder les données !")
