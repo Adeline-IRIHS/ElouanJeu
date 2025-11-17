@@ -1,0 +1,490 @@
+-- ServerScriptService/BrainrotPurchaseSystem
+-- Système d'achat avec ProximityPrompts et déplacement vers la base
+-- Créé le 2025-11-17 par Adeline-IRIHS
+
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+local RunService = game:GetService("RunService")
+
+
+-- Attendre que les managers soient prêts
+while not _G.DataManager do
+	task.wait(0.5)
+end
+
+while not _G.BaseManager do
+	task.wait(0.5)
+end
+
+local DataManager = _G.DataManager
+local BaseManager = _G.BaseManager
+
+-- Configuration
+local PRICE_MULTIPLIER = 1.2
+local TRAVEL_SPEED = 20
+local HOLD_DURATION = 1.5
+
+
+-- Données des brainrots
+local brainrotData = {}
+
+-- Obtenir le prix de base
+local function getBasePrice(brainrot)
+	local basePrice = brainrot:GetAttribute("BasePrice")
+
+	if not basePrice then
+		warn("⚠️ Brainrot", brainrot.Name, "n'a pas d'attribut BasePrice ! Utilisation de 100 par défaut")
+		return 100
+	end
+
+	return basePrice
+end
+
+-- Obtenir le prix actuel
+local function getCurrentPrice(brainrot)
+	local data = brainrotData[brainrot]
+	if data then
+		return math.floor(data.currentPrice)
+	else
+		return getBasePrice(brainrot)
+	end
+end
+
+-- Formater un nombre
+local function formatNumber(num)
+	-- Convertir en nombre au cas où ce serait une string
+	num = tonumber(num) or 0
+
+	if num >= 1000000 then
+		return string.format("%.1fM", num / 1000000)
+	elseif num >= 1000 then
+		return string.format("%.1fK", num / 1000)
+	else
+		return tostring(math.floor(num))
+	end
+end
+
+-- Créer le ProximityPrompt
+local function createProximityPrompt(brainrot)
+	local existingPrompt = brainrot.PrimaryPart:FindFirstChild("PurchasePrompt")
+	if existingPrompt then
+		return existingPrompt
+	end
+
+	local rarity = brainrot:GetAttribute("Rarity") or "Brainrot"
+	local price = getCurrentPrice(brainrot)
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "PurchasePrompt"
+	prompt.ObjectText = rarity .. " - 💖 " .. formatNumber(price) .. " Rizz"
+	prompt.ActionText = "Acheter"
+	prompt.HoldDuration = HOLD_DURATION
+	prompt.MaxActivationDistance = 15
+	prompt.RequiresLineOfSight = false
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.Style = Enum.ProximityPromptStyle.Default
+	prompt.Parent = brainrot.PrimaryPart
+
+	return prompt
+end
+
+-- Mettre à jour le ProximityPrompt
+local function updateProximityPrompt(brainrot)
+	local prompt = brainrot.PrimaryPart:FindFirstChild("PurchasePrompt")
+	if not prompt then return end
+
+	local rarity = brainrot:GetAttribute("Rarity") or "Brainrot"
+	local price = getCurrentPrice(brainrot)
+	local isTraveling = brainrot:GetAttribute("Traveling")
+	local ownerName = brainrot:GetAttribute("OwnerName")
+
+	if isTraveling then
+		prompt.ObjectText = rarity .. " - 💖 " .. formatNumber(price) .. " Rizz\n🔄 → " .. (ownerName or "???")
+		prompt.ActionText = "Racheter (x1.2)"
+	else
+		prompt.ObjectText = rarity .. " - 💖 " .. formatNumber(price) .. " Rizz"
+		prompt.ActionText = "Acheter"
+	end
+end
+
+-- Déplacer vers la base
+local function moveBrainrotToPlatform(brainrot, platform, owner)
+
+	local data = brainrotData[brainrot]
+	if not data then 
+		warn("❌ Pas de data pour ce brainrot")
+		return 
+	end
+
+	data.traveling = true
+	data.targetPlatform = platform
+
+	BaseManager.OccupyPlatform(platform, brainrot.Name)
+
+	-- Vérifier que le brainrot a un PrimaryPart
+	if not brainrot.PrimaryPart then
+		warn("❌ PAS DE PRIMARYPART !")
+		return
+	end
+
+	-- MARQUER LE BRAINROT COMME POSSÉDÉ IMMÉDIATEMENT
+	brainrot:SetAttribute("Owner", owner.UserId)
+	brainrot:SetAttribute("OwnerName", owner.Name)
+	brainrot:SetAttribute("Traveling", true)
+
+	task.wait(0.2) -- Laisser le temps au BrainSpawner de détecter
+
+	-- STOPPER TOUS LES MOUVEMENTS
+	local stoppedCount = 0
+
+	for _, desc in pairs(brainrot:GetDescendants()) do
+		if desc:IsA("Tween") then
+			pcall(function() 
+				desc:Cancel() 
+				desc:Destroy()
+			end)
+			stoppedCount = stoppedCount + 1
+		end
+		if desc.Name == "CF" or desc:IsA("CFrameValue") then
+			pcall(function() desc:Destroy() end)
+			stoppedCount = stoppedCount + 1
+		end
+		if desc:IsA("BodyPosition") or desc:IsA("BodyVelocity") or desc:IsA("BodyGyro") then
+			pcall(function() desc:Destroy() end)
+			stoppedCount = stoppedCount + 1
+		end
+	end
+
+
+	-- Ancrer temporairement
+	for _, part in pairs(brainrot:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Anchored = true
+			part.CanCollide = false
+		end
+	end
+
+	task.wait(0.3)
+
+	-- Positions
+	local startPos = brainrot.PrimaryPart.Position
+	local targetPos = platform.Position + Vector3.new(0, 3, 0)
+	local distance = (targetPos - startPos).Magnitude
+	local travelTime = distance / TRAVEL_SPEED
+
+
+	updateProximityPrompt(brainrot)
+
+	-- DÉPLACEMENT PAR PETITS PAS AVEC RUNSERVICE
+	local startTime = tick()
+	local stepCount = 0
+	local lastPercent = 0
+
+	local moveConnection
+	moveConnection = RunService.Heartbeat:Connect(function()
+		stepCount = stepCount + 1
+
+		-- Vérifier que le brainrot existe toujours
+		if not brainrot or not brainrot.Parent or not brainrot.PrimaryPart then
+			if moveConnection then
+				moveConnection:Disconnect()
+			end
+			return
+		end
+
+		local elapsed = tick() - startTime
+		local progress = math.min(elapsed / travelTime, 1)
+
+		-- Log tous les 25%
+		local currentPercent = math.floor(progress * 4) * 25
+		if currentPercent > lastPercent and currentPercent % 25 == 0 then
+			lastPercent = currentPercent
+		end
+
+		-- Position interpolée
+		local currentPos = startPos:Lerp(targetPos, progress)
+
+		-- Déplacer le modèle
+		local currentCFrame = brainrot.PrimaryPart.CFrame
+		local newCFrame = CFrame.new(currentPos) * (currentCFrame - currentCFrame.Position)
+
+		pcall(function()
+			brainrot:SetPrimaryPartCFrame(newCFrame)
+		end)
+
+		-- Terminé ?
+		if progress >= 1 then
+
+			if moveConnection then
+				moveConnection:Disconnect()
+				moveConnection = nil
+			end
+
+			-- Vérifier le propriétaire final
+			local finalOwner = brainrot:GetAttribute("Owner")
+
+			if finalOwner == owner.UserId then
+
+				brainrot:SetAttribute("Traveling", false)
+				brainrot:SetAttribute("AtBase", true)
+				data.traveling = false
+
+				-- Ancrer définitivement
+				for _, part in pairs(brainrot:GetDescendants()) do
+					if part:IsA("BasePart") then
+						part.Anchored = true
+					end
+				end
+
+				-- SAUVEGARDER DANS LE DATAMANAGER
+				if DataManager then
+
+					local brainrotSaveData = {
+						Type = brainrot:GetAttribute("Rarity"),
+						SlotNumber = platform:GetAttribute("SlotNumber"),
+						PriceMultiplier = data.priceMultiplier
+					}
+
+					
+					DataManager.AddBrainrot(owner, brainrotSaveData)
+
+					-- Forcer une sauvegarde immédiate dans le DataStore
+					DataManager.SaveData(owner)
+
+					-- Vérifier que c'est bien sauvegardé
+					local savedBrainrots = DataManager.GetBrainrots(owner)
+				else
+					warn("❌❌❌ DATAMANAGER NON DISPONIBLE !")
+				end
+
+				-- Désactiver le prompt
+				local prompt = brainrot.PrimaryPart:FindFirstChild("PurchasePrompt")
+				if prompt then
+					prompt.Enabled = false
+				end
+
+				-- Déplacer vers OwnedBrainrots folder
+				local ownedFolder = workspace:FindFirstChild("OwnedBrainrots")
+				if not ownedFolder then
+					ownedFolder = Instance.new("Folder")
+					ownedFolder.Name = "OwnedBrainrots"
+					ownedFolder.Parent = workspace
+				end
+				brainrot.Parent = ownedFolder
+			else
+				-- Racheté pendant le trajet
+				local newOwner = Players:GetPlayerByUserId(finalOwner)
+				if newOwner then
+					local newPlatform = BaseManager.GetFreePlatform(newOwner)
+					if newPlatform then
+						BaseManager.FreePlatform(platform)
+						moveBrainrotToPlatform(brainrot, newPlatform, newOwner)
+					else
+						warn("❌ Nouveau propriétaire n'a plus de place !")
+					end
+				end
+			end
+		end
+	end)
+
+end
+
+-- Gérer l'achat
+local function purchaseBrainrot(player, brainrot)
+
+	-- Vérification 1 : Managers disponibles
+	if not DataManager then
+		warn("❌ ÉCHEC: DataManager non disponible")
+		return false
+	end
+
+	if not BaseManager then
+		warn("❌ ÉCHEC: BaseManager non disponible")
+		return false
+	end
+
+	-- Vérification 2 : Brainrot déjà à une base ?
+	local atBase = brainrot:GetAttribute("AtBase")
+
+	if atBase then
+		warn("❌ ÉCHEC: Brainrot déjà installé dans une base")
+		return false
+	end
+
+	-- Vérification 3 : Le joueur a une base ?
+	local playerData = BaseManager.GetPlayerData(player)
+
+	if not playerData then
+		warn("❌ ÉCHEC: Joueur n'a pas de base")
+		warn("   → Le joueur doit d'abord sélectionner une base !")
+		return false
+	end
+
+	-- Vérification 4 : Place disponible ?
+	local freePlatform = BaseManager.GetFreePlatform(player)
+
+	if not freePlatform then
+		warn("❌ ÉCHEC: Plus de place dans la base")
+		warn("   → Base pleine (14/14 platforms occupées)")
+		return false
+	end
+
+	-- Vérification 5 : Prix et Rizz
+	local price = getCurrentPrice(brainrot)
+	local playerRizz = DataManager.GetRizz(player)
+
+	if playerRizz < price then
+		warn("❌ ÉCHEC: Pas assez de Rizz")
+		warn("   Nécessaire:", price, "/ Possédé:", playerRizz)
+		return false
+	end
+
+	-- Vérification 6 : Déjà propriétaire ?
+	local previousOwner = brainrot:GetAttribute("Owner")
+
+	if previousOwner and previousOwner == player.UserId then
+		warn("❌ ÉCHEC: Joueur possède déjà ce brainrot")
+		return false
+	end
+
+
+	-- Retirer le Rizz
+	DataManager.RemoveRizz(player, price)
+
+	-- Rembourser l'ancien propriétaire si rachat
+	if previousOwner then
+		local previousPlayer = Players:GetPlayerByUserId(previousOwner)
+		if previousPlayer then
+			local data = brainrotData[brainrot]
+			if data and data.previousPrice then
+				DataManager.AddRizz(previousPlayer, data.previousPrice)
+			end
+
+			if data and data.targetPlatform then
+				BaseManager.FreePlatform(data.targetPlatform)
+			end
+		end
+	end
+
+	-- Initialiser ou mettre à jour les données du brainrot
+	if not brainrotData[brainrot] then
+		brainrotData[brainrot] = {
+			owner = player,
+			currentPrice = price,
+			previousPrice = price,
+			priceMultiplier = 1,
+			traveling = false,
+			targetPlatform = nil
+		}
+	else
+		local data = brainrotData[brainrot]
+		data.previousPrice = data.currentPrice
+		data.currentPrice = math.floor(data.currentPrice * PRICE_MULTIPLIER)
+		data.priceMultiplier = data.priceMultiplier * PRICE_MULTIPLIER
+		data.owner = player
+
+	end
+
+	-- Mettre à jour le prompt
+	updateProximityPrompt(brainrot)
+
+	-- Déplacer vers la base
+	moveBrainrotToPlatform(brainrot, freePlatform, player)
+
+	return true
+end
+
+-- Écouter les ProximityPrompts
+ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
+
+
+	if prompt.Name == "PurchasePrompt" then
+
+		-- Le brainrot est le Parent du PrimaryPart qui contient le Prompt
+		local primaryPart = prompt.Parent
+
+		local brainrot = primaryPart and primaryPart.Parent
+
+		if brainrot and brainrot:IsA("Model") then
+
+
+			local success = purchaseBrainrot(player, brainrot)
+
+			if success then
+			else
+				warn("❌ ACHAT ÉCHOUÉ")
+			end
+		else
+			warn("   ❌ Brainrot invalide ou pas un Model")
+			warn("   Type:", brainrot and brainrot.ClassName or "nil")
+		end
+	else
+		print("   ⚠️ Pas un PurchasePrompt, ignoré")
+	end
+
+end)
+
+
+-- Setup des brainrots
+local function setupBrainrots()
+	local brainrotsFolder = workspace:FindFirstChild("BrainRot")
+	if not brainrotsFolder then
+		warn("⚠️ Folder 'BrainRot' introuvable")
+		return
+	end
+
+
+	-- Fonction pour setup un brainrot
+	local function setupBrainrot(brainrot)
+		if not brainrot:IsA("Model") then
+			return
+		end
+
+
+		-- Vérifier/définir le PrimaryPart
+		if not brainrot.PrimaryPart then
+
+			-- Chercher dans cet ordre de priorité
+			local primaryPart = brainrot:FindFirstChild("RootPart") 
+				or brainrot:FindFirstChild("FakeRootPart")
+				or brainrot:FindFirstChild("Body")
+				or brainrot:FindFirstChild("Head")
+				or brainrot:FindFirstChild("Torso")
+				or brainrot:FindFirstChildWhichIsA("BasePart", true)
+
+			if primaryPart then
+				brainrot.PrimaryPart = primaryPart
+			else
+				warn("   ❌ AUCUNE BASEPART TROUVÉE !")
+				return
+			end
+		else
+		end
+
+		-- Créer le ProximityPrompt
+		local prompt = createProximityPrompt(brainrot)
+
+		if prompt then
+		else
+			warn("   ❌ Échec création ProximityPrompt")
+		end
+
+	end
+
+	-- Setup des brainrots existants
+	for _, brainrot in pairs(brainrotsFolder:GetChildren()) do
+		setupBrainrot(brainrot)
+	end
+
+	-- Écouter les nouveaux brainrots
+	brainrotsFolder.ChildAdded:Connect(function(brainrot)
+		task.wait(0.2) -- Attendre que le brainrot soit complètement chargé
+		setupBrainrot(brainrot)
+	end)
+
+end
+
+task.wait(2)
+setupBrainrots()
