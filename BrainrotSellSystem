@@ -1,0 +1,193 @@
+local Players = game:GetService("Players")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+
+-- Attendre que les managers soient prêts
+while not _G.DataManager do
+	task.wait(0.5)
+end
+
+while not _G.BaseManager do
+	task.wait(0.5)
+end
+
+local DataManager = _G.DataManager
+local BaseManager = _G.BaseManager
+
+-- Configuration
+local SELL_MULTIPLIER = 0.5 -- Tu revends à 1.5x le prix d'achat initial
+local HOLD_DURATION = 2.5 -- Durée pour vendre (2.5 secondes)
+
+-- ✅ FONCTION : Formater un nombre
+local function formatNumber(num)
+	num = tonumber(num) or 0
+
+	if num >= 1000000 then
+		return string.format("%.1fM", num / 1000000)
+	elseif num >= 1000 then
+		return string.format("%.1fK", num / 1000)
+	else
+		return tostring(math.floor(num))
+	end
+end
+
+-- ✅ FONCTION : Calculer le prix de vente
+local function getSellPrice(brainrot)
+	local basePrice = brainrot:GetAttribute("BasePrice") or 100
+	local sellPrice = math.floor(basePrice * SELL_MULTIPLIER)
+	return sellPrice
+end
+
+-- ✅ FONCTION : Créer le ProximityPrompt de vente
+local function createSellPrompt(brainrot)
+	-- Vérifier s'il existe déjà
+	local existingPrompt = brainrot.PrimaryPart:FindFirstChild("SellPrompt")
+	if existingPrompt then
+		return existingPrompt
+	end
+
+	local rarity = brainrot:GetAttribute("Rarity") or "Brainrot"
+	local sellPrice = getSellPrice(brainrot)
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "SellPrompt"
+	prompt.ObjectText = rarity .. " - 💸 " .. formatNumber(sellPrice) .. " Rizz"
+	prompt.ActionText = "Vendre"
+	prompt.HoldDuration = HOLD_DURATION
+	prompt.MaxActivationDistance = 15
+	prompt.RequiresLineOfSight = false
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.Style = Enum.ProximityPromptStyle.Default
+	prompt.Parent = brainrot.PrimaryPart
+
+	return prompt
+end
+
+-- ✅ FONCTION : Vendre un brainrot
+local function sellBrainrot(player, brainrot)
+	-- Vérifier que le joueur est bien le propriétaire
+	local owner = brainrot:GetAttribute("Owner")
+	if owner ~= player.UserId then
+		warn("❌ Ce n'est pas ton brainrot !")
+		return false
+	end
+
+	-- Vérifier que le brainrot est bien dans la base
+	local atBase = brainrot:GetAttribute("AtBase")
+	if not atBase then
+		warn("❌ Le brainrot n'est pas dans ta base")
+		return false
+	end
+
+	-- Calculer le prix de vente
+	local sellPrice = getSellPrice(brainrot)
+	local slotNumber = brainrot:GetAttribute("SlotNumber")
+
+	print("💸 VENTE BRAINROT:")
+	print("   Joueur:", player.Name)
+	print("   Type:", brainrot:GetAttribute("Rarity"))
+	print("   Slot:", slotNumber)
+	print("   Prix de vente:", sellPrice)
+
+	-- Ajouter le Rizz au joueur
+	DataManager.AddRizz(player, sellPrice)
+
+	-- Retirer le brainrot des données sauvegardées
+	if slotNumber then
+		DataManager.RemoveBrainrot(player, slotNumber)
+	end
+
+	-- Libérer la platform
+	local baseData = BaseManager.GetPlayerData(player)
+	if baseData then
+		for _, platform in pairs(baseData.Platforms) do
+			if platform:GetAttribute("SlotNumber") == slotNumber then
+				BaseManager.FreePlatform(platform)
+				break
+			end
+		end
+	end
+
+	-- Supprimer le prompt
+	local prompt = brainrot.PrimaryPart:FindFirstChild("SellPrompt")
+	if prompt then
+		prompt:Destroy()
+	end
+
+	-- Détruire le brainrot
+	brainrot:Destroy()
+
+	print("✅ Brainrot vendu pour", sellPrice, "Rizz !")
+	return true
+end
+
+-- ✅ FONCTION : Setup des prompts de vente pour tous les brainrots possédés
+local function setupSellPrompts()
+	task.spawn(function()
+		while true do
+			task.wait(2) -- Vérifier toutes les 2 secondes
+
+			local ownedFolder = workspace:FindFirstChild("OwnedBrainrots")
+			if not ownedFolder then continue end
+
+			for _, brainrot in pairs(ownedFolder:GetChildren()) do
+				if not brainrot:IsA("Model") then continue end
+
+				local atBase = brainrot:GetAttribute("AtBase")
+				if not atBase then continue end
+
+				-- Vérifier que le brainrot a un PrimaryPart
+				if not brainrot.PrimaryPart then continue end
+
+				-- Vérifier s'il a déjà un prompt de vente
+				local existingPrompt = brainrot.PrimaryPart:FindFirstChild("SellPrompt")
+				if existingPrompt then continue end
+
+				-- Créer le prompt de vente
+				createSellPrompt(brainrot)
+			end
+		end
+	end)
+end
+
+-- ✅ FONCTION : Écouter les événements de vente
+local function setupSellEvents()
+	ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
+		if prompt.Name ~= "SellPrompt" then return end
+
+		-- Le brainrot est le Parent du PrimaryPart qui contient le Prompt
+		local primaryPart = prompt.Parent
+		local brainrot = primaryPart and primaryPart.Parent
+
+		if brainrot and brainrot:IsA("Model") then
+			-- Vérifier que c'est bien le propriétaire
+			local owner = brainrot:GetAttribute("Owner")
+			if owner ~= player.UserId then
+				warn("⚠️", player.Name, "a essayé de vendre un brainrot qui ne lui appartient pas")
+				return
+			end
+
+			-- Vendre le brainrot
+			local success = sellBrainrot(player, brainrot)
+
+			if success then
+				print("✅", player.Name, "a vendu un brainrot !")
+			else
+				warn("❌ Échec de la vente du brainrot")
+			end
+		else
+			warn("❌ Brainrot invalide")
+		end
+	end)
+end
+
+-- ✅ DÉMARRAGE DU SYSTÈME
+setupSellPrompts()
+setupSellEvents()
+
+print("✅ BrainrotSellSystem initialisé !")
+
+-- ✅ API Globale
+_G.BrainrotSellSystem = {
+	SellBrainrot = sellBrainrot,
+	GetSellPrice = getSellPrice
+}
