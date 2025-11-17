@@ -6,15 +6,139 @@ local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
+-- Attendre que DataManager soit prêt
+while not _G.DataManager do
+	task.wait(0.5)
+end
+
+local DataManager = _G.DataManager
+
 -- Dossiers
 local baseShowroom = Workspace:WaitForChild("BaseShowroom")
 local baseTemplatesFolder = ServerStorage:WaitForChild("BaseTemplates")
+local brainrotTemplatesFolder = ServerStorage:WaitForChild("BrainrotTemplates")
 
 -- Configuration
 local PLATFORMS_PER_BASE = 14 -- Nombre de tables/platforms par base
 
 -- Données des joueurs
 local playerData = {}
+
+-- ✅ NOUVELLE FONCTION : Restaurer les brainrots sauvegardés
+local function restoreSavedBrainrots(player, playerBase, platforms)
+	print("🔄 Restauration des brainrots pour", player.Name)
+
+	-- Récupérer les brainrots sauvegardés
+	local savedBrainrots = DataManager.GetBrainrots(player)
+
+	if #savedBrainrots == 0 then
+		print("   ℹ️ Aucun brainrot à restaurer")
+		return
+	end
+
+	print("   📦 Brainrots à restaurer:", #savedBrainrots)
+
+	-- Créer le dossier OwnedBrainrots s'il n'existe pas
+	local ownedFolder = Workspace:FindFirstChild("OwnedBrainrots")
+	if not ownedFolder then
+		ownedFolder = Instance.new("Folder")
+		ownedFolder.Name = "OwnedBrainrots"
+		ownedFolder.Parent = Workspace
+	end
+
+	-- Restaurer chaque brainrot
+	for i, brainrotData in ipairs(savedBrainrots) do
+		local rarityFolder = brainrotTemplatesFolder:FindFirstChild(brainrotData.Type)
+
+		if not rarityFolder then
+			warn("   ❌ Rareté introuvable:", brainrotData.Type)
+			continue
+		end
+
+		-- Prendre le template avec le bon nom, ou le premier si ModelName n'existe pas
+		local template = nil
+
+		if brainrotData.ModelName then
+			template = rarityFolder:FindFirstChild(brainrotData.ModelName)
+		end
+
+		if not template then
+			-- Fallback : prendre le premier si le nom n'est pas trouvé
+			template = rarityFolder:FindFirstChildWhichIsA("Model")
+			warn("   ⚠️ ModelName non trouvé, utilisation du premier template de", brainrotData.Type)
+		end
+
+
+		-- Trouver la platform correspondante
+		local targetPlatform = nil
+		for _, platform in pairs(platforms) do
+			if platform:GetAttribute("SlotNumber") == brainrotData.SlotNumber then
+				targetPlatform = platform
+				break
+			end
+		end
+
+		if not targetPlatform then
+			warn("   ❌ Platform Slot", brainrotData.SlotNumber, "introuvable")
+			continue
+		end
+
+		-- Cloner le brainrot
+		local brainrot = template:Clone()
+		brainrot.Name = brainrotData.ModelName or template.Name -- ✅ Garder le nom original
+
+		-- S'assurer qu'il a un PrimaryPart
+		if not brainrot.PrimaryPart then
+			local rootPart = brainrot:FindFirstChild("RootPart") 
+				or brainrot:FindFirstChild("FakeRootPart")
+				or brainrot:FindFirstChild("Body")
+				or brainrot:FindFirstChildWhichIsA("BasePart")
+
+			if rootPart then
+				brainrot.PrimaryPart = rootPart
+			else
+				warn("   ❌ Pas de PrimaryPart pour", brainrotData.Type)
+				brainrot:Destroy()
+				continue
+			end
+		end
+
+		-- Attributs du brainrot
+		brainrot:SetAttribute("Rarity", brainrotData.Type)
+		brainrot:SetAttribute("Owner", player.UserId)
+		brainrot:SetAttribute("OwnerName", player.Name)
+		brainrot:SetAttribute("AtBase", true)
+		brainrot:SetAttribute("Traveling", false)
+		brainrot:SetAttribute("SlotNumber", brainrotData.SlotNumber)
+		brainrot:SetAttribute("BasePrice", brainrotData.BasePrice or 100)
+		brainrot:SetAttribute("CurrentPrice", (brainrotData.BasePrice or 100) * brainrotData.PriceMultiplier)
+		brainrot:SetAttribute("RizzPerTick", brainrotData.RizzPerTick or 1)
+		brainrot:SetAttribute("StoredRizz", 0)
+
+		-- Positionner sur la platform
+		local targetPos = targetPlatform.Position + Vector3.new(0, 1, 0)
+		brainrot:PivotTo(CFrame.new(targetPos))
+
+		-- Ancrer et rendre non-collidable
+		for _, part in pairs(brainrot:GetDescendants()) do
+			if part:IsA("BasePart") then
+				part.Anchored = true
+				part.CanCollide = false
+			end
+		end
+
+		-- Marquer la platform comme occupée
+		targetPlatform:SetAttribute("Occupied", true)
+		targetPlatform:SetAttribute("BrainrotId", brainrot.Name)
+
+		-- Parent dans OwnedBrainrots
+		brainrot.Parent = ownedFolder
+
+		print("   ✅ Restauré:", brainrotData.Type, "sur Slot", brainrotData.SlotNumber)
+	end
+
+	print("✅ Restauration terminée pour", player.Name)
+end
 
 -- Créer la base d'un joueur à la place du showroom
 local function createPlayerBase(player, baseNumber)
@@ -161,6 +285,12 @@ local function createPlayerBase(player, baseNumber)
 		Brainrots = {}
 	}
 
+	-- ✅ RESTAURER LES BRAINROTS SAUVEGARDÉS
+	restoreSavedBrainrots(player, playerBase, platforms)
+
+	-- ✅ SAUVEGARDER LA BASE DANS LE DATAMANAGER
+	DataManager.SetBase(player, baseNumber)
+
 	return true
 end
 
@@ -244,9 +374,28 @@ local function setupShowroomButtons()
 
 			-- Créer la base
 			createPlayerBase(player, i)
+
+			task.delay(2, function()
+				debounce[player.UserId] = nil
+			end)
 		end)
 	end
 end
+
+-- ✅ NOUVEAU : Vérifier si le joueur avait déjà une base et la recréer
+Players.PlayerAdded:Connect(function(player)
+	-- Attendre un peu que DataManager charge les données
+	task.wait(1)
+
+	local savedBaseNumber = DataManager.GetBase(player)
+
+	if savedBaseNumber then
+		print("🏠 Restauration de la base", savedBaseNumber, "pour", player.Name)
+		createPlayerBase(player, savedBaseNumber)
+	else
+		print("ℹ️", player.Name, "n'a pas encore de base")
+	end
+end)
 
 -- Quand un joueur quitte
 Players.PlayerRemoving:Connect(function(player)
@@ -318,3 +467,5 @@ _G.BaseManager = {
 		return count
 	end
 }
+
+print("✅ BaseManager initialisé avec système de restauration")
