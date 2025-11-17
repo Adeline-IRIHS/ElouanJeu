@@ -1,8 +1,3 @@
--- ServerScriptService/BrainrotPurchaseSystem
--- Système d'achat avec ProximityPrompts et déplacement vers la base
--- Créé le 2025-11-17 par Adeline-IRIHS
-
-
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local ProximityPromptService = game:GetService("ProximityPromptService")
