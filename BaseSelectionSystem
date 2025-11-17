@@ -1,0 +1,320 @@
+-- ServerScriptService/BaseSelectionSystem
+-- Système de sélection et gestion des bases pour les joueurs
+-- Créé le 2025-11-16 par Adeline-IRIHS
+
+local Players = game:GetService("Players")
+local ServerStorage = game:GetService("ServerStorage")
+local Workspace = game:GetService("Workspace")
+
+-- Dossiers
+local baseShowroom = Workspace:WaitForChild("BaseShowroom")
+local baseTemplatesFolder = ServerStorage:WaitForChild("BaseTemplates")
+
+-- Configuration
+local PLATFORMS_PER_BASE = 14 -- Nombre de tables/platforms par base
+
+-- Données des joueurs
+local playerData = {}
+
+-- Créer la base d'un joueur à la place du showroom
+local function createPlayerBase(player, baseNumber)
+	-- Vérifier si le joueur a déjà une base
+	if playerData[player.UserId] then
+		warn("⚠️", player.Name, "a déjà une base !")
+		return false
+	end
+
+	local baseContainer = baseShowroom:FindFirstChild("Base" .. baseNumber)
+	if not baseContainer then
+		warn("⚠️ Base" .. baseNumber, "introuvable dans BaseShowroom")
+		return false
+	end
+
+	-- Variables pour sauvegarder tous les objets du showroom
+	local showroomObjects = {}
+	local showroomPosition = nil
+	local showroomModel = nil
+
+	-- Vérifier si Base est un Model directement OU un Folder contenant un Model
+	if baseContainer:IsA("Model") then
+		showroomModel = baseContainer
+	else
+		showroomModel = baseContainer:FindFirstChildWhichIsA("Model")
+	end
+
+	if showroomModel then
+		-- Utiliser la position du PrimaryPart du showroom
+		if showroomModel.PrimaryPart then
+			showroomPosition = showroomModel:GetPrimaryPartCFrame()
+		else
+			-- Sinon, chercher la première BasePart du Model
+			local firstPart = showroomModel:FindFirstChildWhichIsA("BasePart", true)
+			if firstPart then
+				showroomPosition = firstPart.CFrame
+				warn("⚠️ PrimaryPart non défini pour Base" .. baseNumber)
+			end
+		end
+	end
+
+	-- Si toujours pas trouvé, chercher n'importe quelle Part dans le container
+	if not showroomPosition then
+		local firstPart = baseContainer:FindFirstChildWhichIsA("BasePart", true)
+		if firstPart then
+			showroomPosition = firstPart.CFrame
+		end
+	end
+
+	if not showroomPosition then
+		warn("⚠️ Impossible de déterminer la position de Base" .. baseNumber)
+		return false
+	end
+
+	-- MASQUER tous les objets du showroom
+	for _, child in pairs(baseContainer:GetDescendants()) do
+		if child:IsA("BasePart") then
+			child:SetAttribute("OriginalTransparency", child.Transparency)
+			child:SetAttribute("OriginalCanCollide", child.CanCollide)
+			child.Transparency = 1
+			child.CanCollide = false
+			table.insert(showroomObjects, child)
+		elseif child:IsA("Decal") or child:IsA("Texture") then
+			child:SetAttribute("OriginalTransparency", child.Transparency)
+			child.Transparency = 1
+			table.insert(showroomObjects, child)
+		elseif child:IsA("SurfaceGui") or child:IsA("BillboardGui") then
+			child:SetAttribute("OriginalEnabled", child.Enabled)
+			child.Enabled = false
+			table.insert(showroomObjects, child)
+		end
+	end
+
+	-- Récupérer le template
+	local baseTemplate = baseTemplatesFolder:FindFirstChild("Base" .. baseNumber)
+	if not baseTemplate then
+		warn("⚠️ Template Base" .. baseNumber, "introuvable dans ServerStorage")
+		return false
+	end
+
+	-- Cloner la base du joueur
+	local playerBase = baseTemplate:Clone()
+	playerBase.Name = player.Name .. "_Base"
+
+	-- Attributs
+	playerBase:SetAttribute("Owner", player.UserId)
+	playerBase:SetAttribute("OwnerName", player.Name)
+	playerBase:SetAttribute("BaseNumber", baseNumber)
+
+	-- Positionner à la place du showroom avec rotation de 90° à gauche
+	if playerBase.PrimaryPart then
+		local rotatedCFrame = showroomPosition
+		playerBase:SetPrimaryPartCFrame(rotatedCFrame)
+	else
+		warn("⚠️ PrimaryPart non défini pour la base du joueur")
+		playerBase:MoveTo(showroomPosition.Position)
+	end
+
+	-- Parent : si c'était un Model, mettre à côté, sinon dans le Folder
+	if baseContainer:IsA("Model") then
+		playerBase.Parent = baseContainer.Parent
+	else
+		playerBase.Parent = baseContainer
+	end
+
+	-- TROUVER ET CONFIGURER LES PLATFORMS EXISTANTES
+	local tableFolder = playerBase:FindFirstChild("Table")
+	local platforms = {}
+
+	if tableFolder then
+		for i = 1, PLATFORMS_PER_BASE do
+			local tableX = tableFolder:FindFirstChild("Table" .. i)
+			if tableX then
+				-- Table1, Table2... sont des Models
+				-- Chercher le Part "Platform" (avec P majuscule) à l'intérieur
+				local platform = tableX:FindFirstChild("Platform", true) -- true = cherche dans les descendants
+
+				-- Vérifier que c'est bien une BasePart
+				if platform and platform:IsA("BasePart") then
+					-- Configurer la platform pour être un slot
+					platform:SetAttribute("SlotNumber", i)
+					platform:SetAttribute("Occupied", false)
+					platform:SetAttribute("BrainrotId", nil)
+
+					table.insert(platforms, platform)
+				else
+					warn("⚠️ Platform (Part) introuvable dans Table" .. i)
+				end
+			else
+				warn("⚠️ Table" .. i, "introuvable dans la base du joueur")
+			end
+		end
+	else
+		warn("⚠️ Folder 'Table' introuvable dans la base du joueur")
+	end
+
+	-- Sauvegarder les données
+	playerData[player.UserId] = {
+		Base = playerBase,
+		BaseNumber = baseNumber,
+		Platforms = platforms,
+		Slots = {},
+		ShowroomObjects = showroomObjects,
+		Brainrots = {}
+	}
+
+	return true
+end
+
+-- Restaurer le showroom quand un joueur part
+local function restoreShowroom(player)
+	local data = playerData[player.UserId]
+	if not data then return end
+
+	-- Détruire la base du joueur
+	if data.Base then
+		data.Base:Destroy()
+	end
+
+	-- RESTAURER tous les objets du showroom
+	if data.ShowroomObjects then
+		for _, obj in pairs(data.ShowroomObjects) do
+			if not obj or not obj.Parent then continue end
+
+			if obj:IsA("BasePart") then
+				local originalTransparency = obj:GetAttribute("OriginalTransparency") or 0
+				local originalCanCollide = obj:GetAttribute("OriginalCanCollide")
+				if originalCanCollide ~= nil then
+					obj.CanCollide = originalCanCollide
+				end
+				obj.Transparency = originalTransparency
+			elseif obj:IsA("Decal") or obj:IsA("Texture") then
+				local originalTransparency = obj:GetAttribute("OriginalTransparency") or 0
+				obj.Transparency = originalTransparency
+			elseif obj:IsA("SurfaceGui") or obj:IsA("BillboardGui") then
+				local originalEnabled = obj:GetAttribute("OriginalEnabled")
+				if originalEnabled ~= nil then
+					obj.Enabled = originalEnabled
+				end
+			end
+		end
+	end
+
+	playerData[player.UserId] = nil
+end
+
+-- Configurer les boutons du showroom
+local function setupShowroomButtons()
+	for i = 1, 8 do
+		local baseContainer = baseShowroom:FindFirstChild("Base" .. i)
+		if not baseContainer then
+			warn("⚠️ Base" .. i, "introuvable dans BaseShowroom")
+			continue
+		end
+
+		-- Chercher le ClaimButton (dans Model OU Folder)
+		local button = baseContainer:FindFirstChild("ClaimButton", true)
+
+		if not button then
+			warn("⚠️ ClaimButton introuvable dans Base" .. i)
+			continue
+		end
+
+		-- Débounce par joueur
+		local debounce = {}
+
+		-- Événement Touched
+		button.Touched:Connect(function(hit)
+			local character = hit.Parent
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if not humanoid then return end
+
+			local player = Players:GetPlayerFromCharacter(character)
+			if not player then return end
+
+			if debounce[player.UserId] then return end
+			debounce[player.UserId] = true
+
+			-- Vérifier si le joueur a déjà une base
+			if playerData[player.UserId] then
+				warn("⚠️", player.Name, "a déjà une base")
+				task.delay(2, function()
+					debounce[player.UserId] = nil
+				end)
+				return
+			end
+
+			-- Créer la base
+			createPlayerBase(player, i)
+		end)
+	end
+end
+
+-- Quand un joueur quitte
+Players.PlayerRemoving:Connect(function(player)
+	restoreShowroom(player)
+end)
+
+-- Initialisation
+setupShowroomButtons()
+
+-- Fonctions globales accessibles par d'autres scripts
+_G.BaseManager = {
+	-- Obtenir la base d'un joueur
+	GetPlayerBase = function(player)
+		local data = playerData[player.UserId]
+		return data and data.Base or nil
+	end,
+
+	-- Obtenir toutes les données d'un joueur
+	GetPlayerData = function(player)
+		return playerData[player.UserId]
+	end,
+
+	-- Obtenir une platform libre dans la base d'un joueur
+	GetFreePlatform = function(player)
+		local data = playerData[player.UserId]
+		if not data then return nil end
+
+		for _, platform in pairs(data.Platforms) do
+			if not platform:GetAttribute("Occupied") then
+				return platform
+			end
+		end
+
+		return nil
+	end,
+
+	-- Marquer une platform comme occupée
+	OccupyPlatform = function(platform, brainrotId)
+		if platform then
+			platform:SetAttribute("Occupied", true)
+			platform:SetAttribute("BrainrotId", brainrotId)
+			return true
+		end
+		return false
+	end,
+
+	-- Libérer une platform
+	FreePlatform = function(platform)
+		if platform then
+			platform:SetAttribute("Occupied", false)
+			platform:SetAttribute("BrainrotId", nil)
+			return true
+		end
+		return false
+	end,
+
+	-- Obtenir le nombre de platforms disponibles
+	GetAvailablePlatformCount = function(player)
+		local data = playerData[player.UserId]
+		if not data then return 0 end
+
+		local count = 0
+		for _, platform in pairs(data.Platforms) do
+			if not platform:GetAttribute("Occupied") then
+				count = count + 1
+			end
+		end
+
+		return count
+	end
+}
