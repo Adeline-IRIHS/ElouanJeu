@@ -46,9 +46,9 @@ end
 local function getCurrentPrice(brainrot)
 	local data = brainrotData[brainrot]
 	if data then
-		return math.floor(data.currentPrice)
+		return tonumber(data.currentPrice) or 0
 	else
-		return getBasePrice(brainrot)
+		return tonumber(getBasePrice(brainrot)) or 0
 	end
 end
 
@@ -332,8 +332,8 @@ local function purchaseBrainrot(player, brainrot)
 	end
 
 	-- Vérification 5 : Prix et Rizz
-	local price = getCurrentPrice(brainrot)
-	local playerRizz = DataManager.GetRizz(player)
+	local price = tonumber(getCurrentPrice(brainrot)) or 0
+	local playerRizz = tonumber(DataManager.GetRizz(player)) or 0
 
 	if playerRizz < price then
 		warn("❌ ÉCHEC: Pas assez de Rizz")

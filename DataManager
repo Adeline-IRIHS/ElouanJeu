@@ -136,7 +136,7 @@ _G.DataManager = {
 	-- Obtenir le Rizz d'un joueur
 	GetRizz = function(player)
 		local data = playerData[player.UserId]
-		return data and data.Rizz or 0
+		return tonumber(data and data.Rizz or 0) or 0
 	end,
 
 	-- Ajouter du Rizz
