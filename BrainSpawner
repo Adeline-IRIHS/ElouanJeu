@@ -91,7 +91,49 @@ else
 	print("✅ Waypoints détectés:", #waypoints)	
 end
 
--- Créer et spawner un brainrot
+-- ✅ Uniformisation (BaseSelectionSystem restoreSavedBrainrots) du clonage et setup
+local function setupSpawnedBrainrot(model, template, rarityName)
+	-- Attributs
+	model.Name = template.Name
+	model:SetAttribute("Rarity", rarityName)
+	model:SetAttribute("BasePrice", template:GetAttribute("BasePrice") or 10)
+	model:SetAttribute("CurrentPrice", (template:GetAttribute("BasePrice") or 10))
+	model:SetAttribute("RizzPerTick", template:GetAttribute("RizzPerTick") or 1)
+	model:SetAttribute("HolderUserId", nil)
+	model:SetAttribute("AtBase", false)
+	model:SetAttribute("StoredRizz", 0)
+	model:SetAttribute("Owner", nil)
+	model:SetAttribute("OwnerName", nil)
+	model:SetAttribute("SlotNumber", nil)
+	model:SetAttribute("Traveling", true)
+
+	-- S'assurer qu'il y a un PrimaryPart
+	if not model.PrimaryPart then
+		local rootPart = model:FindFirstChild("RootPart") or 
+			model:FindFirstChild("FakeRootPart") or 
+			model:FindFirstChild("Body") or 
+			model:FindFirstChildWhichIsA("BasePart")
+		if rootPart then
+			model.PrimaryPart = rootPart
+		else
+			warn("   ❌ Pas de PrimaryPart pour", rarityName)
+			model:Destroy()
+			return nil
+		end
+	end
+
+	-- Ancrer et rendre non-collidable tous les descendants
+	for _, part in pairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Anchored = true
+			part.CanCollide = false
+		end
+	end
+
+	return model
+end
+
+-- Créer et spawner un brainrot (méthode identique à BaseSelectionSystem)
 local function createBrain(rarityName)
 	local template = pickRandomTemplate(rarityName)
 	if not template then
@@ -100,44 +142,11 @@ local function createBrain(rarityName)
 	end
 
 	local model = template:Clone()
-	model.Name = "Brainrot"
-
-	-- S'assurer qu'il y a un PrimaryPart AVANT de cloner
-	if not model.PrimaryPart then
-		local rootPart = model:FindFirstChild("RootPart") or model:FindFirstChild("FakeRootPart") or model:FindFirstChildWhichIsA("BasePart")
-		if rootPart then
-			model.PrimaryPart = rootPart
-		end
-	end
-
-	model.Parent = brainsFolder
-
-	-- Trouver le Part principal
-	local body = model.PrimaryPart or model:FindFirstChild("Body") or model:FindFirstChildWhichIsA("BasePart")
-
-	if not body then
-		warn("⚠️ Modèle", template.Name, "sans Part principal")
-		model:Destroy()
+	if not setupSpawnedBrainrot(model, template, rarityName) then
 		return nil
 	end
 
-	-- Si body n'est pas le PrimaryPart, le définir
-	if not model.PrimaryPart then
-		model.PrimaryPart = body
-	end
-
-	-- Récupérer prix et production depuis les Attributes du template
-	local basePrice = template:GetAttribute("BasePrice") or 10
-	local rizzPerTick = template:GetAttribute("RizzPerTick") or 1
-
-	-- Attributs du brainrot spawné
-	model:SetAttribute("Rarity", rarityName)
-	model:SetAttribute("BasePrice", basePrice)
-	model:SetAttribute("CurrentPrice", basePrice)
-	model:SetAttribute("RizzPerTick", rizzPerTick)
-	model:SetAttribute("HolderUserId", nil)
-	model:SetAttribute("AtBase", false)
-	model:SetAttribute("StoredRizz", 0)
+	model.Parent = brainsFolder
 
 	-- Position de spawn (gérer Model ou Part)
 	local spawnPosition
@@ -158,50 +167,36 @@ local function createBrain(rarityName)
 		spawnPosition = spawnPart.Position
 	end
 
-
 	model:PivotTo(CFrame.new(spawnPosition + Vector3.new(0, -16, -10)))
 
-	-- Rendre non-collidable et ancré
-	for _, part in pairs(model:GetDescendants()) do
-		if part:IsA("BasePart") then
-			part.CanCollide = false
-			part.Anchored = true
-		end
-	end
-
+	-- Mouvement sur les waypoints (inchangé)
 	coroutine.wrap(function()
-		-- S'assurer que le modèle a un PrimaryPart
 		if not model.PrimaryPart then
-			model.PrimaryPart = body
+			local body = model:FindFirstChild("Body") or model:FindFirstChildWhichIsA("BasePart")
+			if body then
+				model.PrimaryPart = body
+			end
 		end
 
 		for i, wp in ipairs(waypoints) do
-			-- Vérifier si le brainrot existe toujours
 			if not model.Parent then return end
-
-			-- ✅ NOUVEAU : Vérifier si le brainrot a été acheté
 			if model:GetAttribute("Owner") then
 				print("🛑 Brainrot acheté, arrêt du déplacement sur waypoints")
-				return -- Stopper le mouvement
+				return
 			end
 
 			local startCFrame = model:GetPrimaryPartCFrame()
 			local targetPos = wp.Position + Vector3.new(0, 3, 0)
 			local targetCFrame = CFrame.new(targetPos)
-
-			-- Calculer la distance et le temps
 			local distance = (targetPos - startCFrame.Position).Magnitude
 			local duration = distance / BRAINROT_SPEED
 
-			-- Créer un CFrameValue
 			local CF = Instance.new("CFrameValue")
 			CF.Value = startCFrame
-			CF.Name = "CF" -- ← IMPORTANT pour que BrainrotPurchaseSystem puisse le détruire
+			CF.Name = "CF"
 
-			-- Connecter le Changed pour bouger le modèle
 			local connection = CF.Changed:Connect(function()
 				if model and model.Parent then
-					-- ✅ NOUVEAU : Re-vérifier pendant le déplacement
 					if model:GetAttribute("Owner") then
 						if connection then
 							pcall(function() connection:Disconnect() end)
@@ -213,19 +208,16 @@ local function createBrain(rarityName)
 				end
 			end)
 
-			-- TweenInfo
 			local tweenInfo = TweenInfo.new(
 				duration,
 				Enum.EasingStyle.Linear,
 				Enum.EasingDirection.Out
 			)
 
-			-- Créer et jouer le Tween sur le CFrameValue
 			local tween = TweenService:Create(CF, tweenInfo, {Value = targetCFrame})
 			tween:Play()
 			tween.Completed:Wait()
 
-			-- Nettoyer
 			if connection then
 				pcall(function()
 					if connection then
@@ -240,7 +232,6 @@ local function createBrain(rarityName)
 			end
 
 			if model:GetAttribute("Owner") then
-
 				return
 			end
 		end
@@ -252,7 +243,7 @@ local function createBrain(rarityName)
 	end)()
 end
 
--- Vérifier les spawns garantis
+-- Vérifier les spawns garantis (inchangé)
 local function checkGuaranteedSpawns()
 	local now = tick()
 
@@ -277,13 +268,11 @@ local function checkGuaranteedSpawns()
 	return nil
 end
 
--- Boucle principale de spawn
+-- Boucle principale de spawn (inchangée)
 while true do
 	wait(NORMAL_SPAWN_INTERVAL)
 
-	-- Vérifier si un spawn garanti doit se produire
 	local guaranteedRarity = checkGuaranteedSpawns()
-
 	local rarityToSpawn
 	if guaranteedRarity then
 		rarityToSpawn = guaranteedRarity
