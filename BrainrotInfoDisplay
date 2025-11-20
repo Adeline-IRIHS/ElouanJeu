@@ -1,0 +1,191 @@
+-- SuperSecret: texte blanc, dégradé rainbow, stroke noir bien visible
+
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local RUN_INTERVAL = 0.4
+local DIST_MAX = 40
+
+local RARITY_COLORS = {
+	Noob = Color3.fromRGB(200, 200, 200),
+	Common = Color3.fromRGB(100, 255, 100),
+	Uncommon = Color3.fromRGB(60, 225, 255),
+	Rare = Color3.fromRGB(90, 60, 220),
+	Epic = Color3.fromRGB(170, 0, 190),
+	Mythic = Color3.fromRGB(255, 140, 0),
+	Legendary = Color3.fromRGB(255, 220, 50),
+	Secret = Color3.fromRGB(36, 36, 36),
+	SuperSecret = Color3.fromRGB(255, 255, 255), -- Couleur blanche pour le texte, sera override par Gradient
+}
+
+local PRODUCTION_COLOR = Color3.fromRGB(250, 30, 175)  -- Magenta/rose
+local PRICE_COLOR = Color3.fromRGB(90, 255, 60)        -- Vert vif
+
+local function formatNumber(n)
+	n = tonumber(n) or 0
+	if n >= 1e9 then
+		return string.format("%.2fB", n / 1e9)
+	elseif n >= 1e6 then
+		return string.format("%.2fM", n / 1e6)
+	elseif n >= 1e3 then
+		return string.format("%.1fK", n / 1e3)
+	else
+		return tostring(n)
+	end
+end
+
+local function formatName(str)
+	if not str then return "" end
+	return str:gsub("_", " ")
+end
+
+local function ensurePrimaryPart(brainrot)
+	if not brainrot.PrimaryPart then
+		local body = brainrot:FindFirstChild("Body")
+			or brainrot:FindFirstChildWhichIsA("BasePart")
+		if body then
+			brainrot.PrimaryPart = body
+		end
+	end
+end
+
+local function createInfoGui(brainrot)
+	ensurePrimaryPart(brainrot)
+	local rarity = brainrot:GetAttribute("Rarity") or "Noob"
+	local color = RARITY_COLORS[rarity] or Color3.fromRGB(220,0,0)
+	local rizz = brainrot:GetAttribute("RizzPerTick") or 0
+	local price = brainrot:GetAttribute("CurrentPrice") or brainrot:GetAttribute("BasePrice") or 0
+	local name = formatName(brainrot.Name)
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "BrainrotInfoGui"
+	gui.Size = UDim2.new(6,0,5,0)
+	gui.StudsOffset = Vector3.new(0,4.6,0)
+	gui.AlwaysOnTop = true
+	gui.MaxDistance = 120
+
+	local adornee = brainrot.PrimaryPart or brainrot:FindFirstChild("Body") or brainrot:FindFirstChildWhichIsA("BasePart")
+	if adornee then gui.Adornee = adornee end
+
+	-- NOM : Blanc, gras, stroke noir
+	local nameLabel = Instance.new("TextLabel", gui)
+	nameLabel.Size = UDim2.new(1,0,0.22,0)
+	nameLabel.Position = UDim2.new(0,0,0,0)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text = name
+	nameLabel.TextColor3 = Color3.fromRGB(255,255,255)
+	nameLabel.Font = Enum.Font.GothamBlack
+	nameLabel.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+	nameLabel.TextStrokeTransparency = 0.15
+	nameLabel.TextScaled = true
+	nameLabel.ZIndex = 2
+
+	-- RARETÉ : couleur rareté, gras, stroke noir, arc-en-ciel si SuperSecret
+	local rarityLabel = Instance.new("TextLabel", gui)
+	rarityLabel.Size = UDim2.new(1,0,0.22,0)
+	rarityLabel.Position = UDim2.new(0,0,0.22,0)
+	rarityLabel.BackgroundTransparency = 1
+	rarityLabel.Text = rarity
+	rarityLabel.Font = Enum.Font.GothamBlack
+	rarityLabel.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+	rarityLabel.TextStrokeTransparency = 0.07
+	rarityLabel.TextScaled = true
+	rarityLabel.ZIndex = 2
+	if rarity == "SuperSecret" then
+		rarityLabel.TextColor3 = Color3.fromRGB(255,255,255)
+		local rainbow = Instance.new("UIGradient")
+		rainbow.Color = ColorSequence.new {
+			ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255,0,0)),    -- rouge
+			ColorSequenceKeypoint.new(0.16, Color3.fromRGB(255,127,0)),  -- orange
+			ColorSequenceKeypoint.new(0.33, Color3.fromRGB(255,255,0)),  -- jaune
+			ColorSequenceKeypoint.new(0.50, Color3.fromRGB(0,255,0)),    -- vert
+			ColorSequenceKeypoint.new(0.66, Color3.fromRGB(0,0,255)),    -- bleu
+			ColorSequenceKeypoint.new(0.83, Color3.fromRGB(75,0,130)),   -- indigo
+			ColorSequenceKeypoint.new(1.00, Color3.fromRGB(148,0,211)),  -- violet
+		}
+		rainbow.Parent = rarityLabel
+		rainbow.Rotation = 0 -- horizontal
+	else
+		rarityLabel.TextColor3 = color
+	end
+
+	-- PRODUCTION : 💖, rose/magenta, gras, stroke noir, /s
+	local prodLabel = Instance.new("TextLabel", gui)
+	prodLabel.Size = UDim2.new(1,0,0.22,0)
+	prodLabel.Position = UDim2.new(0,0,0.44,0)
+	prodLabel.BackgroundTransparency = 1
+	prodLabel.Text = string.format("💖%s/s", formatNumber(rizz))
+	prodLabel.TextColor3 = PRODUCTION_COLOR
+	prodLabel.Font = Enum.Font.GothamBlack
+	prodLabel.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+	prodLabel.TextStrokeTransparency = 0.1
+	prodLabel.TextScaled = true
+	prodLabel.ZIndex = 2
+
+	-- PRIX : Vert, gras, stroke noir
+	local priceLabel = Instance.new("TextLabel", gui)
+	priceLabel.Size = UDim2.new(1,0,0.22,0)
+	priceLabel.Position = UDim2.new(0,0,0.66,0)
+	priceLabel.BackgroundTransparency = 1
+	priceLabel.Text = string.format("$%s", formatNumber(price))
+	priceLabel.TextColor3 = PRICE_COLOR
+	priceLabel.Font = Enum.Font.GothamBlack
+	priceLabel.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+	priceLabel.TextStrokeTransparency = 0.1
+	priceLabel.TextScaled = true
+	priceLabel.ZIndex = 2
+
+	return gui
+end
+
+local function setupBrainrot(brainrot)
+	ensurePrimaryPart(brainrot)
+	spawn(function()
+		while brainrot.Parent do
+			local show = false
+			local adornee = brainrot.PrimaryPart or brainrot:FindFirstChild("Body") or brainrot:FindFirstChildWhichIsA("BasePart")
+			if adornee then
+				for _, player in ipairs(Players:GetPlayers()) do
+					local char = player.Character
+					if char and char.PrimaryPart then
+						local dist = (adornee.Position - char.PrimaryPart.Position).Magnitude
+						if dist < DIST_MAX then
+							show = true
+							break
+						end
+					end
+				end
+			end
+			local gui = brainrot:FindFirstChild("BrainrotInfoGui")
+			if show and not gui then
+				gui = createInfoGui(brainrot)
+				gui.Parent = brainrot
+			elseif not show and gui then
+				gui:Destroy()
+			end
+			wait(RUN_INTERVAL)
+		end
+	end)
+end
+
+local function setupFolder(folder)
+	for _, obj in ipairs(folder:GetChildren()) do
+		if obj:IsA("Model") and obj:GetAttribute("Rarity") then
+			setupBrainrot(obj)
+		end
+	end
+	folder.ChildAdded:Connect(function(obj)
+		wait(0.2)
+		if obj:IsA("Model") and obj:GetAttribute("Rarity") then
+			setupBrainrot(obj)
+		end
+	end)
+end
+
+setupFolder(Workspace:WaitForChild("BrainRot"))
+if Workspace:FindFirstChild("OwnedBrainrots") then
+	setupFolder(Workspace.OwnedBrainrots)
+end
+Workspace.ChildAdded:Connect(function(obj)
+	if obj.Name == "OwnedBrainrots" then
+		setupFolder(obj)
+	end
+end)
