@@ -59,13 +59,23 @@ local function restoreSavedBrainrots(player, playerBase, platforms)
 		local template = nil
 
 		if brainrotData.ModelName then
-			template = rarityFolder:FindFirstChild(brainrotData.ModelName)
+			for _, model in ipairs(rarityFolder:GetChildren()) do
+				if model:IsA("Model") and model.Name == brainrotData.ModelName then
+					template = model
+					break
+				end
+			end
 		end
 
 		if not template then
-			-- Fallback : prendre le premier si le nom n'est pas trouvé
-			template = rarityFolder:FindFirstChildWhichIsA("Model")
-			warn("   ⚠️ ModelName non trouvé, utilisation du premier template de", brainrotData.Type)
+			-- Fallback : prendre le premier Model si le nom n'est pas trouvé
+			for _, model in ipairs(rarityFolder:GetChildren()) do
+				if model:IsA("Model") then
+					template = model
+					warn("   ⚠️ ModelName non trouvé, utilisation du premier template de", brainrotData.Type)
+					break
+				end
+			end
 		end
 
 
