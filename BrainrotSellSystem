@@ -17,17 +17,32 @@ local BaseManager = _G.BaseManager
 local SELL_MULTIPLIER = 0.5 -- Tu revends à 1.5x le prix d'achat initial
 local HOLD_DURATION = 2.5 -- Durée pour vendre (2.5 secondes)
 
--- ✅ FONCTION : Formater un nombre
+-- ✅ FONCTION : Formater un nombre avec K M B T Qa Qi Sx Sp Oc No Dc...
 local function formatNumber(num)
 	num = tonumber(num) or 0
-
-	if num >= 1000000 then
-		return string.format("%.1fM", num / 1000000)
-	elseif num >= 1000 then
-		return string.format("%.1fK", num / 1000)
-	else
-		return tostring(math.floor(num))
+	if num < 0 then
+		return "0"
 	end
+
+	local suffixes = {
+		"", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"
+	}
+	local index = 1
+	local value = num
+
+	while value >= 1000 and index < #suffixes do
+		value = value / 1000
+		index = index + 1
+	end
+
+	local formatted
+	if value >= 100 then
+		formatted = string.format("%.1f", value)
+	else
+		formatted = string.format("%.2f", value)
+	end
+
+	return formatted .. suffixes[index]
 end
 
 -- ✅ FONCTION : Calculer le prix de vente
