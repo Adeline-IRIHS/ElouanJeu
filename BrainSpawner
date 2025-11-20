@@ -106,6 +106,7 @@ local function setupSpawnedBrainrot(model, template, rarityName)
 	model:SetAttribute("OwnerName", nil)
 	model:SetAttribute("SlotNumber", nil)
 	model:SetAttribute("Traveling", true)
+	model:SetAttribute("Model.Name", template.Name)
 
 	-- S'assurer qu'il y a un PrimaryPart
 	if not model.PrimaryPart then
