@@ -1,0 +1,125 @@
+-- NewPlayerSysteme
+-- Guide tous les joueurs lors du choix de la base, et les nouveaux vers leur brainrot Noob
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+-- RemoteEvent pour indiquer la cible au client
+local remoteName = "NewPlayerArrowEvent"
+local arrowEvent = ReplicatedStorage:FindFirstChild(remoteName) or Instance.new("RemoteEvent")
+arrowEvent.Name = remoteName
+arrowEvent.Parent = ReplicatedStorage
+
+local baseShowroom = Workspace:WaitForChild("BaseShowroom", 5)
+local CLAIMBUTTON_NAME = "ClaimButton"
+local BASE_MANAGER = _G.BaseManager
+local ADMIN_COMMAND = _G.AdminCommand
+
+local function getUnclaimedBases()
+	local unclaimed = {}
+	for i = 1, 8 do
+		local baseContainer = baseShowroom:FindFirstChild("Base" .. i)
+		if baseContainer then
+			local claimBtn = baseContainer:FindFirstChild(CLAIMBUTTON_NAME, true)
+			if claimBtn and not claimBtn:GetAttribute("Claimed") then
+				table.insert(unclaimed, {BaseContainer = baseContainer, Button = claimBtn, Index = i})
+			end
+		end
+	end
+	return unclaimed
+end
+
+local function getClosestUnclaimedBaseButton(player)
+	local character = player.Character
+	if not character or not character.PrimaryPart then return nil end
+	local pos = character.PrimaryPart.Position
+	local unclaimed = getUnclaimedBases()
+	local closest, minDist
+	for _, info in ipairs(unclaimed) do
+		local btn = info.Button
+		if btn:IsA("BasePart") then
+			local dist = (btn.Position - pos).Magnitude
+			if (not minDist) or (dist < minDist) then
+				minDist = dist
+				closest = info
+			end
+		end
+	end
+	return closest
+end
+
+local function isNewPlayer(player)
+	if not BASE_MANAGER or not BASE_MANAGER.GetPlayerBase then return false end
+	local base = BASE_MANAGER.GetPlayerBase(player)
+	return not base
+end
+
+local function showArrowToBase(player)
+	local closestBase = getClosestUnclaimedBaseButton(player)
+	if closestBase and closestBase.Button then
+		arrowEvent:FireClient(player, closestBase.Button)
+	else
+		-- Retirer la flèche si aucune base disponible
+		arrowEvent:FireClient(player, nil)
+	end
+end
+
+local function showArrowToNoobBrainrot(player)
+	local ownedFolder = Workspace:FindFirstChild("OwnedBrainrots")
+	if ownedFolder then
+		for _, brainrot in ipairs(ownedFolder:GetChildren()) do
+			if brainrot:GetAttribute("Owner") == player.UserId and brainrot:GetAttribute("Rarity") == "Noob" then
+				local body = brainrot.PrimaryPart or brainrot:FindFirstChild("Body") or brainrot:FindFirstChildWhichIsA("BasePart")
+				if body then
+					arrowEvent:FireClient(player, body)
+				end
+				break
+			end
+		end
+	end
+end
+
+local function onPlayerClaimedBase(player)
+	local baseData = BASE_MANAGER.GetPlayerData(player)
+	if not baseData then return end
+	local platforms = baseData.Platforms
+	local freePlatform = nil
+	for _, plat in ipairs(platforms) do
+		if not plat:GetAttribute("Occupied") then
+			freePlatform = plat
+			break
+		end
+	end
+	if not freePlatform then return end
+	if ADMIN_COMMAND and ADMIN_COMMAND.SpawnBrainrot then
+		ADMIN_COMMAND.SpawnBrainrot(player.UserId, "Noob", freePlatform:GetAttribute("SlotNumber"))
+		task.wait(1)
+		showArrowToNoobBrainrot(player)
+	end
+end
+
+-- Suivi automatique pour tous les joueurs
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterAdded:Wait()
+	showArrowToBase(player)  -- Tous les joueurs voient la flèche vers le bouton base la plus proche
+
+	if isNewPlayer(player) then
+		local closestBase = getClosestUnclaimedBaseButton(player)
+		if closestBase and closestBase.Button then
+			local conn
+			conn = closestBase.Button.Touched:Connect(function(hit)
+				local p = Players:GetPlayerFromCharacter(hit.Parent)
+				if p == player then
+					task.wait(0.5)
+					onPlayerClaimedBase(player)
+					if conn then conn:Disconnect() end
+				end
+			end)
+		end
+	end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	arrowEvent:FireClient(player, nil)
+end)
