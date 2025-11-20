@@ -121,6 +121,9 @@ local function validateData(data)
 		brainrot.PriceMultiplier = tonumber(brainrot.PriceMultiplier) or 1
 		brainrot.BasePrice = tonumber(brainrot.BasePrice) or 100
 		brainrot.RizzPerTick = tonumber(brainrot.RizzPerTick) or 1
+		if brainrot.ModelName ~= nil then
+			brainrot.ModelName = tostring(brainrot.ModelName)
+		end
 	end
 
 	return data
@@ -192,14 +195,7 @@ local function savePlayerData(player)
 	-- Valider avant sauvegarde
 	data = validateData(data)
 
-	-- ✅ DEBUG : Afficher ce qui va être sauvegardé
-	print("💾 SAUVEGARDE pour", player.Name, ":")
-	print("   - Rizz:", data.Rizz)
-	print("   - BaseNumber:", data.BaseNumber)
-	print("   - Brainrots:", #data.Brainrots)
-	print("   - Level:", data.Level)
 
-	-- Sauvegarder
 	local success, errorMessage = pcall(function()
 		PlayerDataStore:SetAsync("Player_" .. userId, data)
 	end)
@@ -348,7 +344,8 @@ _G.DataManager = {
 			SlotNumber = tonumber(brainrotData.SlotNumber),
 			PriceMultiplier = tonumber(brainrotData.PriceMultiplier) or 1,
 			BasePrice = tonumber(brainrotData.BasePrice) or 100,
-			RizzPerTick = tonumber(brainrotData.RizzPerTick) or 1
+			RizzPerTick = tonumber(brainrotData.RizzPerTick) or 1,
+			ModelName = tostring(brainrotData.ModelName)
 		}
 
 		table.insert(data.Brainrots, cleanData)
