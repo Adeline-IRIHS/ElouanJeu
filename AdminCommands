@@ -43,7 +43,6 @@ local function isAdmin(player)
 	return false
 end
 
--- ✅ FONCTION : Formater un nombre
 local function formatNumber(num)
 	num = tonumber(num) or 0
 
@@ -56,7 +55,6 @@ local function formatNumber(num)
 	end
 end
 
--- ✅ FONCTION : Déplacer un brainrot sur les waypoints
 local function moveBrainrotOnPath(brainrot)
 	-- Trouver le folder Portal
 	local portalFolder = workspace:FindFirstChild("Portal")
@@ -66,19 +64,10 @@ local function moveBrainrotOnPath(brainrot)
 		return
 	end
 
-	-- Trouver les waypoints (ARBORESCENCE CORRECTE)
 	local spawnPortalA = portalFolder:FindFirstChild("SpawnPortalA")
-	local conveyorPath = workspace:FindFirstChild("ConveyorPath") -- ✅ CORRIGÉ
+	local conveyorPath = workspace:FindFirstChild("ConveyorPath") 
 	local spawnPortalB = portalFolder:FindFirstChild("SpawnPortalB")
 
-	if not spawnPortalA or not conveyorPath or not spawnPortalB then
-		warn("❌ Portails ou ConveyorPath introuvables")
-		warn("   SpawnPortalA:", spawnPortalA and "✅" or "❌")
-		warn("   ConveyorPath:", conveyorPath and "✅" or "❌")
-		warn("   SpawnPortalB:", spawnPortalB and "✅" or "❌")
-		brainrot:Destroy()
-		return
-	end
 
 	-- Obtenir la position du SpawnPortalA (c'est un Model)
 	local startPosition
@@ -96,7 +85,6 @@ local function moveBrainrotOnPath(brainrot)
 		end
 	end
 
-	-- Obtenir la position du SpawnPortalB (c'est un Model)
 	local endPosition
 	if spawnPortalB.PrimaryPart then
 		endPosition = spawnPortalB.PrimaryPart.Position
@@ -304,6 +292,8 @@ local function commandSpawn(admin, rarity)
 		brainrot:SetAttribute("BasePrice", template:GetAttribute("BasePrice") or 100)
 		brainrot:SetAttribute("RizzPerTick", template:GetAttribute("RizzPerTick") or 1)
 		brainrot:SetAttribute("SpawnTime", tick())
+		brainrot:SetAttribute("Model.Name", template.Name)
+
 
 		-- ✅ Ancrer toutes les parts du brainrot
 		for _, part in pairs(brainrot:GetDescendants()) do
@@ -362,6 +352,8 @@ local function commandSpawn(admin, rarity)
 	brainrot:SetAttribute("BasePrice", template:GetAttribute("BasePrice") or 100)
 	brainrot:SetAttribute("RizzPerTick", template:GetAttribute("RizzPerTick") or 1)
 	brainrot:SetAttribute("SpawnTime", tick())
+	brainrot:SetAttribute("Model.Name", template.Name)
+
 
 	-- ✅ Ancrer toutes les parts du brainrot
 	for _, part in pairs(brainrot:GetDescendants()) do
@@ -446,6 +438,8 @@ local function commandSpawnMoving(admin, rarity)
 	brainrot:SetAttribute("BasePrice", template:GetAttribute("BasePrice") or 100)
 	brainrot:SetAttribute("RizzPerTick", template:GetAttribute("RizzPerTick") or 1)
 	brainrot:SetAttribute("SpawnTime", tick())
+	brainrot:SetAttribute("Model.Name", template.Name)
+
 
 	-- ✅ Désancrer pour permettre le déplacement
 	for _, part in pairs(brainrot:GetDescendants()) do
@@ -543,6 +537,8 @@ local function commandSpawnMovingN(admin, brainrotName)
 	brainrot:SetAttribute("BasePrice", template:GetAttribute("BasePrice") or 100)
 	brainrot:SetAttribute("RizzPerTick", template:GetAttribute("RizzPerTick") or 1)
 	brainrot:SetAttribute("SpawnTime", tick())
+	brainrot:SetAttribute("Model.Name", template.Name)
+
 
 	-- ✅ Désancrer pour permettre le déplacement
 	for _, part in pairs(brainrot:GetDescendants()) do
